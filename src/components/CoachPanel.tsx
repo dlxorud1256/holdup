@@ -47,8 +47,7 @@ export function CoachPanel({ state }: { state: GameState }) {
   }
 
   const run = async (question: string, context: string, opts?: { hidden?: boolean; kind?: 'review' }) => {
-    // 히스토리는 최근 6개만 — 매 호출 입력 토큰(비용)을 줄인다
-    const history: CoachTurn[] = messages.slice(-6).map(m => ({ role: m.role, content: m.text }))
+    const history: CoachTurn[] = messages.slice(-8).map(m => ({ role: m.role, content: m.text }))
     setMessages(prev => [
       ...prev,
       { role: 'user', text: question, hidden: opts?.hidden },
@@ -61,7 +60,6 @@ export function CoachPanel({ state }: { state: GameState }) {
         question,
         context,
         history,
-        mode: opts?.kind === 'review' ? 'review' : 'question',
         onDelta: chunk => {
           setMessages(prev => {
             const next = [...prev]
@@ -108,15 +106,15 @@ export function CoachPanel({ state }: { state: GameState }) {
         <div className="coach-setup">
           <h4>🎓 AI 코치 연결하기</h4>
           <p>
-            코치에게 자유롭게 질문하려면 Anthropic API 키가 필요해요.{' '}
-            <a href="https://console.anthropic.com/" target="_blank" rel="noreferrer">
-              console.anthropic.com
+            코치에게 자유롭게 질문하려면 OpenAI API 키가 필요해요.{' '}
+            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">
+              platform.openai.com
             </a>
-            에서 발급할 수 있어요.
+            에서 발급할 수 있어요 (ChatGPT 구독과는 별개인 API 크레딧이 필요해요).
           </p>
           <input
             type="password"
-            placeholder="sk-ant-..."
+            placeholder="sk-..."
             value={keyInput}
             onChange={e => setKeyInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && saveKey()}
@@ -124,7 +122,7 @@ export function CoachPanel({ state }: { state: GameState }) {
           <button className="btn primary" onClick={saveKey} disabled={!keyInput.trim()}>
             저장하고 시작
           </button>
-          <small>키는 이 브라우저(localStorage)에만 저장되고, Anthropic API 호출에만 쓰여요.</small>
+          <small>키는 이 브라우저(localStorage)에만 저장되고, OpenAI API 호출에만 쓰여요.</small>
           {apiKey && (
             <button className="coach-link-btn" onClick={() => setShowKeySetup(false)}>← 돌아가기</button>
           )}

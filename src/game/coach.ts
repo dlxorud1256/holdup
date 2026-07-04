@@ -1,18 +1,21 @@
-import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { Action, fmt, GameState, potSize } from './engine'
 import { decide } from './ai'
 import { cardText } from './deck'
 import { Street } from './types'
 
-// 실시간 홀덤 코치: 현재 게임 상황을 컨텍스트로 붙여 Claude에게 질문한다.
+// 실시간 홀덤 코치: 현재 게임 상황을 컨텍스트로 붙여 GPT에게 질문한다.
 // API 키는 사용자의 브라우저(localStorage)에만 저장된다.
 
-export const API_KEY_STORAGE = 'holdup_api_key'
+export const API_KEY_STORAGE = 'holdup_openai_key'
 
-// 하이브리드: 사용자가 직접 읽는 질문 답변은 품질(Sonnet 5), 핸드마다 도는
-// 자동 복기는 비용(Haiku 4.5) 우선. 질문 ~9원, 복기 ~4원.
-const QUESTION_MODEL = 'claude-sonnet-5'
-const REVIEW_MODEL = 'claude-haiku-4-5'
+// 질문·복기 모두 GPT-5.4 mini (호출당 약 3~4원).
+// 추론(reasoning) 토큰은 출력 요금으로 과금되므로 effort를 명시적으로 꺼둔다.
+const COACH_MODEL = 'gpt-5.4-mini'
+
+// OpenAI는 브라우저 직접 호출을 CORS로 차단하므로 Vercel 함수 프록시를 경유한다.
+// 미국 리전에서 실행돼 OpenAI 지역 차단도 피한다. 키는 저장하지 않고 통과만 시킨다 (proxy/ 참고).
+const PROXY_BASE_URL = 'https://holdup-coach-proxy.vercel.app/api'
 
 const STREET_KO: Record<Street, string> = { preflop: '프리플랍', flop: '플랍', turn: '턴', river: '리버' }
 
@@ -141,51 +144,49 @@ export async function askCoach(opts: {
   question: string
   context: string
   history: CoachTurn[]
-  mode?: 'question' | 'review'
   onDelta: (chunk: string) => void
 }): Promise<string> {
-  const client = new Anthropic({
+  const client = new OpenAI({
     apiKey: opts.apiKey,
+    baseURL: PROXY_BASE_URL,
     dangerouslyAllowBrowser: true, // 개인용 앱: 키는 사용자 본인 브라우저에만 저장됨
   })
 
-  const messages: Anthropic.MessageParam[] = [
+  const input = [
     ...opts.history.map(h => ({ role: h.role, content: h.content })),
     { role: 'user' as const, content: `[현재 상황]\n${opts.context}\n\n[질문]\n${opts.question}` },
   ]
 
-  const model = opts.mode === 'review' ? REVIEW_MODEL : QUESTION_MODEL
-  // thinking은 끈다 — 짧은 설명엔 불필요한데 thinking 토큰이 출력 요금으로 과금되기 때문.
-  // Sonnet 5는 thinking을 생략하면 기본으로 켜지는 모델이라 명시적으로 disabled를 보내야 하고,
-  // Haiku 4.5는 해당 파라미터 형식을 지원하지 않으므로 생략한다.
-  const stream = client.messages.stream({
-    model,
-    max_tokens: 1024,
-    ...(model === QUESTION_MODEL ? { thinking: { type: 'disabled' as const } } : {}),
-    system: SYSTEM_PROMPT,
-    messages,
+  const stream = await client.responses.create({
+    model: COACH_MODEL,
+    instructions: SYSTEM_PROMPT,
+    input,
+    reasoning: { effort: 'none' }, // 추론 토큰 과금 차단 (짧은 설명엔 불필요)
+    max_output_tokens: 4096,
+    stream: true,
   })
 
-  stream.on('text', opts.onDelta)
-
-  const final = await stream.finalMessage()
-  return final.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map(b => b.text)
-    .join('')
+  let text = ''
+  for await (const event of stream) {
+    if (event.type === 'response.output_text.delta') {
+      text += event.delta
+      opts.onDelta(event.delta)
+    }
+  }
+  return text
 }
 
 export function coachErrorMessage(e: unknown): string {
-  if (e instanceof Anthropic.AuthenticationError) {
+  if (e instanceof OpenAI.AuthenticationError) {
     return '⚠️ API 키가 올바르지 않아요. 패널 아래 "키 변경"에서 다시 설정해주세요.'
   }
-  if (e instanceof Anthropic.RateLimitError) {
-    return '⚠️ 요청이 너무 잦아요. 잠시 후 다시 시도해주세요.'
+  if (e instanceof OpenAI.RateLimitError) {
+    return '⚠️ 요청이 너무 잦거나 크레딧이 부족해요. platform.openai.com에서 확인해주세요.'
   }
-  if (e instanceof Anthropic.APIConnectionError) {
+  if (e instanceof OpenAI.APIConnectionError) {
     return '⚠️ 네트워크 연결에 문제가 있어요. 인터넷 연결을 확인해주세요.'
   }
-  if (e instanceof Anthropic.APIError) {
+  if (e instanceof OpenAI.APIError) {
     return `⚠️ API 오류가 발생했어요 (${e.status}). 잠시 후 다시 시도해주세요.`
   }
   return '⚠️ 알 수 없는 오류가 발생했어요. 다시 시도해주세요.'
