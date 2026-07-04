@@ -1,12 +1,23 @@
-import { Card, Player } from './types'
+import { Player } from './types'
 import { Action, BIG_BLIND, GameState, potSize } from './engine'
 import { evaluateBest, handKoreanName } from './handEval'
+import { estimateEquity } from './equity'
 
-// 봇의 행동 결정 + 사람용 힌트에 함께 쓰인다
+// 봇 AI: 몬테카를로 승률 계산(눈)은 공유하되, 그 위의 전략 층은 아키타입별로 다르다.
+// 아키타입은 새 게임마다 봇들에게 비밀리에 섞여 배정되고(engine.newGame),
+// 핸드의 12%는 자기 유형과 다르게 쳐서(오프타입 믹싱) 읽기가 확신이 되지 않게 한다.
+// - lag: 매니악 — 컨티뉴에이션 벳, 블러프 레이즈, 오버베팅으로 압박
+// - station: 콜링 스테이션 — 팟 오즈 무시하고 웬만하면 콜, 블러핑 안 통함
+// - trapper: 함정형 — 강한 패는 숨기고(체크/콜) 다음 스트리트에 터뜨림
+// - rock: 바위 — 프리미엄만 치는 초타이트, 베팅하면 거의 진짜
+// - balanced/human: 균형형 — 교과서적 판단 (사람용 힌트/코치에도 사용)
 export interface Advice {
   action: Action
   reason: string
+  equity: number // 0~1 승률 추정치
 }
+
+export const BOT_ITERATIONS = 300
 
 const round50 = (x: number) => Math.round(x / 50) * 50
 
@@ -16,140 +27,333 @@ function clampRaiseTo(state: GameState, p: Player, want: number): number {
   return Math.max(minTo, Math.min(maxTo, round50(want)))
 }
 
-// Chen 공식 기반 시작 패 점수 (대략 -1 ~ 20)
-function chenScore(cards: Card[]): number {
-  const [a, b] = [...cards].sort((x, y) => y.rank - x.rank)
-  const pts = (r: number) => (r === 14 ? 10 : r === 13 ? 8 : r === 12 ? 7 : r === 11 ? 6 : r / 2)
-  if (a.rank === b.rank) return Math.max(5, pts(a.rank) * 2)
-  let score = pts(a.rank)
-  if (a.suit === b.suit) score += 2
-  const gap = a.rank - b.rank - 1
-  score -= gap === 0 ? 0 : gap === 1 ? 1 : gap === 2 ? 2 : gap === 3 ? 4 : 5
-  if (gap <= 1 && a.rank < 12) score += 1
-  return score
-}
-
-function hasFlushDraw(cards: Card[]): boolean {
-  const counts: Record<string, number> = {}
-  for (const c of cards) counts[c.suit] = (counts[c.suit] ?? 0) + 1
-  return Object.values(counts).some(n => n === 4)
-}
-
-function hasStraightDraw(cards: Card[]): boolean {
-  const ranks = new Set(cards.map(c => c.rank))
-  for (let x = 2; x <= 11; x++) {
-    if (ranks.has(x) && ranks.has(x + 1) && ranks.has(x + 2) && ranks.has(x + 3)) return true
+// 봇들이 사람 플레이어를 읽은 결과.
+// bluffFactor: 사람이 베팅 앞에서 잘 접을수록 1보다 커짐 → 블러핑 빈도 증가
+// callFactor: 사람이 잘 받아줄수록 1보다 커짐 → 더 얇은 패로도 밸류 베팅
+function readsOf(state: GameState): { bluffFactor: number; callFactor: number } {
+  const o = Array.isArray(state.observed) ? state.observed[0] : null
+  const human = state.players[0]
+  const humanIn = human && !human.folded && !human.out
+  if (!o || !humanIn || o.facedBet < 6) return { bluffFactor: 1, callFactor: 1 }
+  const foldRate = o.foldToBet / o.facedBet
+  return {
+    bluffFactor: Math.max(0.4, Math.min(2, foldRate * 2.2)),
+    callFactor: Math.max(0.7, Math.min(1.5, (1 - foldRate) * 2.2)),
   }
-  return false
+}
+
+interface Ctx {
+  equity: number
+  pot: number
+  toCall: number
+  potOdds: number
+  fairShare: number // n명 중 1명 = 1/n (승률 기준선)
+  edge: number
+  canRaise: boolean
+  pct: number
+  label: string
+  isPreflop: boolean
+  bluffFactor: number
+  callFactor: number
+}
+
+function buildCtx(state: GameState, p: Player): Ctx {
+  const opponents = state.players.filter(q => q.id !== p.id && !q.out && !q.folded).length
+  const equity = estimateEquity(p.cards, state.community, opponents, BOT_ITERATIONS)
+  const toCall = Math.max(0, state.currentBet - p.bet)
+  const pot = potSize(state)
+  const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0
+  const fairShare = 1 / (opponents + 1)
+  const pct = Math.round(equity * 100)
+  const handName = state.community.length >= 3
+    ? handKoreanName(evaluateBest([...p.cards, ...state.community]))
+    : null
+  const { bluffFactor, callFactor } = readsOf(state)
+  return {
+    equity, pot, toCall, potOdds, fairShare,
+    edge: equity - fairShare,
+    canRaise: p.bet + p.chips > state.currentBet,
+    pct,
+    label: handName ? `${handName}, 승률 약 ${pct}%` : `승률 약 ${pct}%`,
+    isPreflop: state.street === 'preflop',
+    bluffFactor, callFactor,
+  }
 }
 
 export function decide(state: GameState, p: Player): Advice {
-  const toCall = Math.max(0, state.currentBet - p.bet)
-  if (state.street === 'preflop') return decidePreflop(state, p, toCall)
-  return decidePostflop(state, p, toCall)
+  const ctx = buildCtx(state, p)
+  const style = p.isHuman ? 'human' : (p.handStyle ?? p.style)
+  switch (style) {
+    case 'lag': return decideLag(state, p, ctx)
+    case 'station': return decideStation(state, p, ctx)
+    case 'trapper': return decideTrapper(state, p, ctx)
+    case 'rock': return decideRock(state, p, ctx)
+    default: return decideBalanced(state, p, ctx)
+  }
 }
 
-function decidePreflop(state: GameState, p: Player, toCall: number): Advice {
-  const score = chenScore(p.cards)
-  const { tight, aggression } = p.personality
-  const canRaise = p.bet + p.chips > state.currentBet
-  const pot = potSize(state)
+// ───────── 루비 🦊: 매니악 (loose-aggressive) ─────────
+function decideLag(state: GameState, p: Player, c: Ctx): Advice {
+  const advise = (action: Action, reason: string): Advice => ({ action, reason, equity: c.equity })
+  const r = Math.random()
 
-  if (toCall <= 0) {
-    if (canRaise && (score >= 10 - aggression * 1.5 || Math.random() < aggression * 0.2)) {
-      const to = clampRaiseTo(state, p, state.currentBet + pot * 0.75 + BIG_BLIND)
-      return { action: { type: 'raise', to }, reason: '시작 패가 강한 편이에요. 레이즈로 주도권을 잡아보세요.' }
-    }
-    return { action: { type: 'check' }, reason: '공짜로 다음 카드를 볼 수 있어요. 체크!' }
-  }
-
-  if (canRaise && score >= 12 && Math.random() < 0.85) {
-    const to = clampRaiseTo(state, p, Math.max(state.currentBet * 3, BIG_BLIND * 3))
-    return { action: { type: 'raise', to }, reason: '프리미엄 시작 패예요! 강하게 레이즈해서 가치를 키우세요.' }
-  }
-  const unopened = state.currentBet === BIG_BLIND
-  if (canRaise && unopened && score >= 8.5 && Math.random() < 0.5 + aggression * 0.3) {
-    const to = clampRaiseTo(state, p, BIG_BLIND * 3.5)
-    return { action: { type: 'raise', to }, reason: '괜찮은 시작 패예요. 먼저 레이즈해서 압박해볼 만해요.' }
-  }
-
-  const bigBet = toCall > p.chips * 0.35 || toCall > BIG_BLIND * 8
-  const callNeed = (bigBet ? 10 : 6) + tight * 2 - aggression
-  if (score >= callNeed) {
-    return { action: { type: 'call' }, reason: '시작 패가 콜할 만큼은 좋아요.' }
-  }
-  if (toCall <= BIG_BLIND && score >= callNeed - 2) {
-    return { action: { type: 'call' }, reason: '콜 비용이 싸니까 한번 볼 만해요.' }
-  }
-  return { action: { type: 'fold' }, reason: '시작 패가 약해요. 무리하지 말고 폴드하는 게 좋아요.' }
-}
-
-function decidePostflop(state: GameState, p: Player, toCall: number): Advice {
-  const all = [...p.cards, ...state.community]
-  const res = evaluateBest(all)
-  const name = handKoreanName(res)
-  const { tight, aggression } = p.personality
-  const canRaise = p.bet + p.chips > state.currentBet
-  const pot = potSize(state)
-
-  let strength = [0.12, 0.35, 0.55, 0.68, 0.78, 0.85, 0.92, 0.97, 0.99][res.category]
-  if (res.category === 1) {
-    const boardTop = Math.max(...state.community.map(c => c.rank))
-    if (res.tiebreak[0] >= boardTop) strength += 0.1 // 탑 페어 이상
-    if (!p.cards.some(c => c.rank === res.tiebreak[0])) strength -= 0.15 // 보드 페어일 뿐
-  }
-  // 족보가 전부 공용 카드로만 만들어졌으면 할인
-  const boardOnly = res.cards.every(c => state.community.some(b => b.rank === c.rank && b.suit === c.suit))
-  if (boardOnly) strength -= 0.15
-
-  let drawText = ''
-  if (state.street !== 'river') {
-    if (res.category < 5 && hasFlushDraw(all)) {
-      strength += 0.12
-      drawText = '플러시 드로우'
-    } else if (res.category < 4 && hasStraightDraw(all)) {
-      strength += 0.09
-      drawText = '스트레이트 드로우'
-    }
-  }
-  strength += (Math.random() - 0.5) * 0.06
-
-  if (toCall <= 0) {
-    const wantBet =
-      strength > 0.72 ||
-      (strength > 0.5 && Math.random() < 0.35 + aggression * 0.3) ||
-      Math.random() < aggression * 0.12
-    if (wantBet && canRaise) {
-      const to = clampRaiseTo(state, p, state.currentBet + Math.max(BIG_BLIND, pot * (0.5 + aggression * 0.3)))
-      return {
-        action: { type: 'raise', to },
-        reason: strength > 0.7 ? `${name} — 패가 강해요! 베팅으로 가치를 키우세요.` : '적당한 패지만 베팅으로 압박해볼 만해요.',
+  if (c.isPreflop) {
+    if (c.toCall <= 0) {
+      if (c.canRaise && (c.equity > c.fairShare * 0.9 || r < 0.35 * p.intensity)) {
+        return advise({ type: 'raise', to: clampRaiseTo(state, p, BIG_BLIND * 3.5) }, '압박 오픈 레이즈')
       }
+      return advise({ type: 'check' }, '체크')
     }
-    return {
-      action: { type: 'check' },
-      reason: strength < 0.45 ? '패가 약하니 공짜로 넘어가요. 체크!' : '무리하지 않고 체크로 지켜봐요.',
+    const unopened = state.currentBet === BIG_BLIND
+    if (c.canRaise && c.equity > c.fairShare * 1.5 && r < 0.75) {
+      return advise(
+        { type: 'raise', to: clampRaiseTo(state, p, Math.max(state.currentBet * 3, BIG_BLIND * 4)) },
+        '강한 패 — 크게 압박',
+      )
+    }
+    if (c.canRaise && unopened && (c.equity > c.fairShare * 0.8 || r < 0.3 * c.bluffFactor * p.intensity)) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, BIG_BLIND * 3.5) }, '넓은 오픈 레이즈')
+    }
+    if (c.canRaise && !unopened && r < 0.1 * c.bluffFactor * p.intensity && c.toCall < p.chips * 0.25) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet * 2.8) }, '3벳 블러프')
+    }
+    if (c.equity >= c.potOdds * 0.9 && c.toCall < p.chips * 0.5) return advise({ type: 'call' }, '루즈 콜')
+    if (c.toCall <= BIG_BLIND * 2 && c.equity > c.fairShare * 0.6) return advise({ type: 'call' }, '싸니까 콜')
+    return advise({ type: 'fold' }, '이번엔 접기')
+  }
+
+  // 포스트플랍: 상대가 잘 받아줄수록 더 얇은 패로도 밸류 베팅
+  const valueThresh = 0.68 - (c.callFactor - 1) * 0.12
+  if (c.toCall <= 0) {
+    if (c.canRaise && c.equity >= valueThresh) {
+      const size = r < 0.22 ? c.pot * 1.3 : c.pot * (0.6 + Math.random() * 0.4) // 가끔 오버베팅
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + size) }, '밸류 베팅')
+    }
+    const cbetSpot = state.preflopRaiserId === p.id && state.street === 'flop'
+    if (c.canRaise && cbetSpot && r < Math.min(0.85, 0.75 * c.bluffFactor * p.intensity)) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.6) }, '컨티뉴에이션 벳')
+    }
+    if (c.canRaise && r < 0.25 * c.bluffFactor * p.intensity) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.65) }, '블러프 베팅')
+    }
+    return advise({ type: 'check' }, '체크')
+  }
+  if (c.canRaise && c.equity >= 0.8 && r < 0.7) {
+    return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot) }, '강하게 레이즈')
+  }
+  if (c.canRaise && state.street !== 'river' && r < 0.12 * c.bluffFactor * p.intensity && c.toCall < p.chips * 0.3) {
+    return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot * 0.9) }, '블러프 레이즈')
+  }
+  if (c.equity >= c.potOdds - 0.03) return advise({ type: 'call' }, '루즈 콜')
+  if (c.canRaise && state.street === 'river' && r < 0.05 * c.bluffFactor) {
+    return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot) }, '리버 블러프')
+  }
+  return advise({ type: 'fold' }, '저항이 세면 접는다')
+}
+
+// ───────── 포포 🐻: 콜링 스테이션 (loose-passive) ─────────
+function decideStation(state: GameState, p: Player, c: Ctx): Advice {
+  const advise = (action: Action, reason: string): Advice => ({ action, reason, equity: c.equity })
+  const r = Math.random()
+
+  if (c.isPreflop) {
+    if (c.toCall <= 0) {
+      if (c.canRaise && c.equity > c.fairShare * 1.8 && r < 0.25) {
+        return advise({ type: 'raise', to: clampRaiseTo(state, p, BIG_BLIND * 3) }, '이건 진짜 좋아서')
+      }
+      return advise({ type: 'check' }, '체크')
+    }
+    if (c.toCall > p.chips * 0.35) {
+      if (c.equity > c.fairShare * 1.25) return advise({ type: 'call' }, '큰 베팅이지만 콜')
+      return advise({ type: 'fold' }, '너무 커서 폴드')
+    }
+    if (c.equity > (c.fairShare * 0.55) / p.intensity || c.toCall <= BIG_BLIND * 2) {
+      return advise({ type: 'call' }, '일단 콜')
+    }
+    return advise({ type: 'fold' }, '이건 아니다')
+  }
+
+  // 포스트플랍: 뭐라도 걸쳤으면 팟 오즈 무시하고 콜
+  if (c.toCall <= 0) {
+    if (c.canRaise && c.equity > 0.85 && r < 0.5) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.5) }, '이건 베팅해야지')
+    }
+    return advise({ type: 'check' }, '체크')
+  }
+  if (c.toCall > p.chips * 0.5) {
+    if (c.equity > 0.6) return advise({ type: 'call' }, '올인급이지만 콜')
+    return advise({ type: 'fold' }, '이건 못 받아')
+  }
+  if (c.canRaise && c.equity > 0.88 && r < 0.4) {
+    return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet * 2.2) }, '레이즈')
+  }
+  const anyPiece = c.equity > (c.fairShare * 0.72) / p.intensity
+  if (anyPiece || c.equity >= c.potOdds * 0.7) return advise({ type: 'call' }, '혹시 모르니까 콜')
+  if (c.toCall <= BIG_BLIND && r < 0.5) return advise({ type: 'call' }, '싸니까 콜')
+  return advise({ type: 'fold' }, '완전 꽝이라 폴드')
+}
+
+// ───────── 나비 🐱: 함정형 TAG (tight-aggressive + slow-play) ─────────
+function decideTrapper(state: GameState, p: Player, c: Ctx): Advice {
+  const advise = (action: Action, reason: string): Advice => ({ action, reason, equity: c.equity })
+  const r = Math.random()
+
+  // 설치된 함정 유지/발동
+  if (!c.isPreflop && p.plan?.type === 'trap') {
+    if (c.equity < 0.7) {
+      p.plan = null // 보드가 위험해져 함정 해제 → 아래의 평범한 판단으로
+    } else if (state.street === p.plan.setOn) {
+      if (c.toCall > 0) return advise({ type: 'call' }, '(함정) 조용히 콜')
+      return advise({ type: 'check' }, '(함정) 약한 척 체크')
+    } else {
+      p.plan = null
+      if (c.canRaise) {
+        const to = c.toCall > 0 ? state.currentBet + c.pot : c.pot * 0.9
+        return advise({ type: 'raise', to: clampRaiseTo(state, p, to) }, '함정 발동 — 크게')
+      }
+      return advise({ type: 'call' }, '함정 콜')
     }
   }
 
-  const potOdds = toCall / (pot + toCall)
-  if (strength >= 0.85 && canRaise && Math.random() < 0.75) {
-    const to = clampRaiseTo(state, p, state.currentBet + pot)
-    return { action: { type: 'raise', to }, reason: `${name} — 아주 강한 패예요! 레이즈하세요.` }
-  }
-  const margin = 0.1 + (tight - 0.5) * 0.12
-  if (strength >= potOdds + margin) {
-    return {
-      action: { type: 'call' },
-      reason: drawText ? `${drawText}가 있어서 콜해볼 만해요.` : `${name} — 콜 비용 대비 나쁘지 않은 패예요.`,
+  if (c.isPreflop) {
+    if (c.toCall <= 0) {
+      if (c.canRaise && c.equity > c.fairShare * 1.4 && r < 0.6) {
+        return advise({ type: 'raise', to: clampRaiseTo(state, p, BIG_BLIND * 3) }, '좋은 패 레이즈')
+      }
+      return advise({ type: 'check' }, '체크')
     }
+    if (c.equity > c.fairShare * 1.8 && r < 0.35) {
+      return advise({ type: 'call' }, '프리미엄 슬로우플레이') // 최강 패를 숨기고 콜만
+    }
+    if (c.canRaise && c.equity > c.fairShare * 1.4 && r < 0.7) {
+      return advise(
+        { type: 'raise', to: clampRaiseTo(state, p, Math.max(state.currentBet * 3, BIG_BLIND * 3)) },
+        '타이트한 레이즈',
+      )
+    }
+    if (c.equity > c.fairShare * 1.05) return advise({ type: 'call' }, '괜찮은 패 콜')
+    if (c.toCall <= BIG_BLIND && c.equity > c.fairShare * 0.85) return advise({ type: 'call' }, '싸게 보기')
+    return advise({ type: 'fold' }, '기다린다')
   }
-  if (toCall <= pot * 0.15 && strength >= 0.3) {
-    return { action: { type: 'call' }, reason: '콜 비용이 아주 싸서 한번 따라가볼 만해요.' }
+
+  // 함정 설치: 플랍/턴에서 아주 강한 패면 절반 확률로 약한 척
+  if (p.plan === null && c.equity >= 0.8 && (state.street === 'flop' || state.street === 'turn') && r < 0.5 * p.intensity) {
+    p.plan = { type: 'trap', setOn: state.street }
+    if (c.toCall > 0) return advise({ type: 'call' }, '(함정 설치) 콜만')
+    return advise({ type: 'check' }, '(함정 설치) 체크')
   }
-  if (canRaise && state.street !== 'river' && Math.random() < aggression * 0.06) {
-    const to = clampRaiseTo(state, p, state.currentBet + pot * 0.8)
-    return { action: { type: 'raise', to }, reason: '(블러핑) 가끔은 과감하게 상대를 밀어붙이는 것도 전략이에요.' }
+
+  // 평범한 TAG
+  const valueThresh = 0.66 - (c.callFactor - 1) * 0.1
+  if (c.toCall <= 0) {
+    if (c.canRaise && c.equity >= valueThresh && r < 0.8) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.7) }, '밸류 베팅')
+    }
+    if (c.canRaise && r < 0.08 * c.bluffFactor) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.6) }, '가끔은 블러프')
+    }
+    return advise({ type: 'check' }, '체크')
   }
-  return { action: { type: 'fold' }, reason: `${name}뿐이라 상대 베팅을 따라가기엔 약해요. 폴드가 안전합니다.` }
+  if (c.canRaise && c.equity >= 0.82 && r < 0.6) {
+    return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot * 0.8) }, '밸류 레이즈')
+  }
+  if (c.equity >= c.potOdds + 0.08) return advise({ type: 'call' }, '계산상 콜')
+  if (c.toCall <= BIG_BLIND && c.equity >= c.potOdds * 0.85) return advise({ type: 'call' }, '싸니까 콜')
+  return advise({ type: 'fold' }, '아니면 접는다')
+}
+
+// ───────── 바위 🪨: 초타이트 니트 (tight-passive) — 베팅하면 거의 진짜 ─────────
+function decideRock(state: GameState, p: Player, c: Ctx): Advice {
+  const advise = (action: Action, reason: string): Advice => ({ action, reason, equity: c.equity })
+  const r = Math.random()
+  // intensity가 높을수록 아주 약간 느슨해진다
+  const premium = c.fairShare * 1.5 * (2 - p.intensity)
+
+  if (c.isPreflop) {
+    if (c.toCall <= 0) {
+      if (c.canRaise && c.equity > premium && r < 0.7) {
+        return advise({ type: 'raise', to: clampRaiseTo(state, p, BIG_BLIND * 3) }, '프리미엄 레이즈')
+      }
+      return advise({ type: 'check' }, '체크')
+    }
+    if (c.equity > premium * 1.15) {
+      if (c.canRaise && r < 0.75) {
+        return advise(
+          { type: 'raise', to: clampRaiseTo(state, p, Math.max(state.currentBet * 3, BIG_BLIND * 3)) },
+          '최상급 패',
+        )
+      }
+      return advise({ type: 'call' }, '최상급 패 콜')
+    }
+    if (c.equity > premium) return advise({ type: 'call' }, '좋은 패만 친다')
+    if (c.toCall <= BIG_BLIND && c.equity > c.fairShare * 1.1) return advise({ type: 'call' }, '싸니까 한 번')
+    return advise({ type: 'fold' }, '패스')
+  }
+
+  // 포스트플랍: 정직 그 자체 — 블러핑 없음
+  if (c.toCall <= 0) {
+    if (c.canRaise && c.equity > 0.75 && r < 0.75) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.6) }, '진짜 패 베팅')
+    }
+    return advise({ type: 'check' }, '체크')
+  }
+  if (c.canRaise && c.equity > 0.85 && r < 0.6) {
+    return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot * 0.8) }, '확실할 때만 레이즈')
+  }
+  if (c.equity >= c.potOdds + 0.12) return advise({ type: 'call' }, '이 정도면 콜')
+  return advise({ type: 'fold' }, '아니면 만다')
+}
+
+// ───────── 균형형: 사람용 힌트/코치 + balanced 봇의 교과서적 판단 ─────────
+function decideBalanced(state: GameState, p: Player, c: Ctx): Advice {
+  const { tight, aggression } = p.personality
+  const advise = (action: Action, reason: string): Advice => ({ action, reason, equity: c.equity })
+
+  if (c.toCall <= 0) {
+    const betChance =
+      c.edge > 0.25 ? 0.9 :
+      c.edge > 0.12 ? 0.4 + aggression * 0.4 :
+      c.edge > 0 ? aggression * 0.25 :
+      aggression * 0.1
+    if (c.canRaise && Math.random() < betChance) {
+      const to = clampRaiseTo(state, p, state.currentBet + Math.max(BIG_BLIND, c.pot * (0.4 + c.equity * 0.5)))
+      return advise(
+        { type: 'raise', to },
+        c.edge > 0.12
+          ? `${c.label} — 평균(${Math.round(c.fairShare * 100)}%)보다 높아요. 베팅으로 가치를 키우세요.`
+          : `${c.label} — 강하진 않지만 베팅으로 상대를 접게 만들 수도 있어요.`,
+      )
+    }
+    return advise({ type: 'check' }, `${c.label} — 돈을 내지 않고 다음 카드를 보는 게 이득이에요. 체크!`)
+  }
+
+  const oddsPct = Math.round(c.potOdds * 100)
+
+  if (c.canRaise && c.equity > c.potOdds + 0.15 && c.edge > 0.12 && Math.random() < 0.35 + aggression * 0.5) {
+    const to = clampRaiseTo(state, p, state.currentBet + c.pot * (0.6 + aggression * 0.4))
+    return advise({ type: 'raise', to }, `${c.label} — 아주 유리한 상황이에요. 레이즈로 팟을 키우세요!`)
+  }
+
+  let margin = (tight - 0.5) * 0.08 - 0.02
+  if (c.toCall > p.chips * 0.5) margin += 0.06 + tight * 0.04 // 스택 절반이 넘는 베팅은 더 신중하게
+  if (c.equity >= c.potOdds + margin) {
+    return advise(
+      { type: 'call' },
+      `${c.label} — 콜 비용은 팟의 ${oddsPct}%인데 승률이 그보다 높아요. 콜이 수학적으로 이득!`,
+    )
+  }
+
+  if (c.toCall <= BIG_BLIND && c.equity >= c.potOdds * 0.8) {
+    return advise({ type: 'call' }, `${c.label} — 아슬아슬하지만 콜 비용이 싸서 한번 볼 만해요.`)
+  }
+
+  if (c.canRaise && state.street !== 'river' && Math.random() < aggression * 0.05) {
+    const to = clampRaiseTo(state, p, state.currentBet + c.pot * 0.8)
+    return advise({ type: 'raise', to }, `(블러핑) ${c.label}지만 가끔은 과감하게 밀어붙이는 것도 전략이에요.`)
+  }
+
+  return advise(
+    { type: 'fold' },
+    `${c.label} — 콜 비용(팟의 ${oddsPct}%)보다 승률이 낮아서 따라갈수록 손해예요. 폴드!`,
+  )
 }

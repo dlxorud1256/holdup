@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Action, applyAction, BIG_BLIND, fmt, GameState, newGame, potSize, SMALL_BLIND, startHand } from './game/engine'
 import { Player } from './game/types'
 import { decide } from './game/ai'
+import { estimateEquity } from './game/equity'
 import { describeHoleCards, evaluateBest, handKoreanName } from './game/handEval'
 import { cardKey } from './game/deck'
 import { CardView } from './components/CardView'
 import { PlayerSeat } from './components/PlayerSeat'
 import { ActionBar } from './components/ActionBar'
 import { LogPanel } from './components/LogPanel'
+import { CoachPanel } from './components/CoachPanel'
 import { GuideModal, HelpModal } from './components/Modals'
 
 const STREET_KO: Record<string, string> = { preflop: '프리플랍', flop: '플랍', turn: '턴', river: '리버' }
@@ -28,6 +30,7 @@ export default function App() {
   const [showGuide, setShowGuide] = useState(false)
   const [showHelp, setShowHelp] = useState(true) // 처음 접속하면 게임 방법부터 보여준다
   const [hint, setHint] = useState<string | null>(null)
+  const [sideTab, setSideTab] = useState<'log' | 'coach'>('log')
 
   const human = state.players[0]
   const isHumanTurn = state.phase === 'betting' && state.players[state.currentIdx].isHuman
@@ -66,6 +69,14 @@ export default function App() {
     const advice = decide(state, human)
     setHint(`${advice.reason} → 추천: ${actionLabel(advice.action, state, human)}`)
   }
+
+  const aliveOpponents = state.players.filter(q => !q.isHuman && !q.out && !q.folded).length
+  // 승률은 같은 스트리트 안에서는 변하지 않으므로 카드/상대 수가 바뀔 때만 재계산
+  const equity = useMemo(() => {
+    if (state.phase !== 'betting' || human.folded || human.cards.length < 2) return null
+    return estimateEquity(human.cards, state.community, aliveOpponents, 250)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.handNumber, state.phase, state.community.length, aliveOpponents, human.folded])
 
   const best = state.community.length >= 3 && !human.folded && human.cards.length === 2
     ? evaluateBest([...human.cards, ...state.community])
@@ -117,6 +128,9 @@ export default function App() {
               {myHand && (
                 <div className="my-hand-label">
                   현재 족보<br /><b>{myHand}</b>
+                  {equity !== null && (
+                    <><br /><span className="equity">승률 약 {Math.round(equity * 100)}% (상대 {aliveOpponents}명)</span></>
+                  )}
                   {best && <><br /><small>금색 테두리가 최고 조합</small></>}
                 </div>
               )}
@@ -156,7 +170,23 @@ export default function App() {
           </div>
         </div>
 
-        <LogPanel log={state.log} />
+        <div className="sidebar">
+          <div className="side-tabs">
+            <button className={sideTab === 'log' ? 'active' : ''} onClick={() => setSideTab('log')}>
+              📜 기록
+            </button>
+            <button className={sideTab === 'coach' ? 'active' : ''} onClick={() => setSideTab('coach')}>
+              🎓 코치
+            </button>
+          </div>
+          {/* 탭을 바꿔도 코치 대화가 유지되도록 둘 다 렌더하고 CSS로 숨긴다 */}
+          <div className={`side-body${sideTab === 'log' ? '' : ' hide'}`}>
+            <LogPanel log={state.log} />
+          </div>
+          <div className={`side-body${sideTab === 'coach' ? '' : ' hide'}`}>
+            <CoachPanel state={state} />
+          </div>
+        </div>
       </div>
 
       {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}

@@ -1,4 +1,4 @@
-import { Card, LogEntry, Phase, Player, Street } from './types'
+import { BotStyle, Card, LogEntry, ObservedStats, Phase, Player, Street } from './types'
 import { cardText, newDeck, shuffle } from './deck'
 import { compareHands, evaluateBest, handKoreanName, HandResult } from './handEval'
 
@@ -42,6 +42,9 @@ export interface GameState {
   actionSeq: number // 상태 변화마다 증가 (UI 타이머 동기화용)
   handOver: HandOverInfo | null
   gameResult: 'won' | 'lost' | null
+  preflopRaiserId: number | null // 프리플랍 마지막 레이저 (봇의 컨티뉴에이션 벳 판단용)
+  observed: ObservedStats[] // 플레이어별 관찰 통계 (index = player id)
+  voluntary: boolean[] // 이번 핸드에 각 플레이어가 자발적으로 돈을 넣었는지
 }
 
 export const fmt = (n: number) => n.toLocaleString('ko-KR')
@@ -53,26 +56,48 @@ function addLog(state: GameState, text: string, kind: LogEntry['kind'] = 'action
   if (state.log.length > 300) state.log.splice(0, state.log.length - 300)
 }
 
-function mkPlayer(
-  id: number, name: string, avatar: string, isHuman: boolean,
-  tight: number, aggression: number,
-): Player {
+// 새 게임마다 이 풀에서 3개를 비밀리에 뽑아 봇들에게 배정한다
+export const BOT_STYLE_POOL: BotStyle[] = ['lag', 'station', 'trapper', 'rock', 'balanced']
+
+// 오프타입 믹싱: 핸드의 12%는 자기 유형과 다른 스타일로 친다 (읽기를 확신으로 만들지 않기 위해)
+const OFF_TYPE_RATE = 0.12
+
+function offTypeStyle(base: BotStyle): BotStyle {
+  const others = BOT_STYLE_POOL.filter(s => s !== base)
+  return others[Math.floor(Math.random() * others.length)]
+}
+
+function emptyStats(): ObservedStats {
+  return { handsDealt: 0, handsVoluntary: 0, facedBet: 0, foldToBet: 0, actions: 0, raises: 0 }
+}
+
+function mkPlayer(id: number, name: string, avatar: string, isHuman: boolean): Player {
   return {
     id, name, avatar, isHuman,
     chips: START_CHIPS, cards: [], bet: 0, totalBet: 0,
     folded: false, allIn: false, out: false,
     lastAction: null, revealed: false,
-    personality: { tight, aggression },
+    personality: { tight: 0.5, aggression: 0.5 },
+    style: 'human', handStyle: 'human', intensity: 1,
+    plan: null,
   }
 }
 
 export function newGame(): GameState {
   const players = [
-    mkPlayer(0, '나', '🙂', true, 0.5, 0.5),
-    mkPlayer(1, '루비', '🦊', false, 0.35, 0.75),
-    mkPlayer(2, '포포', '🐻', false, 0.7, 0.35),
-    mkPlayer(3, '나비', '🐱', false, 0.45, 0.55),
+    mkPlayer(0, '나', '🙂', true),
+    mkPlayer(1, '루비', '🦊', false),
+    mkPlayer(2, '포포', '🐻', false),
+    mkPlayer(3, '나비', '🐱', false),
   ]
+  // 아키타입 비밀 셔플 + 게임별 강도 편차 (누가 어떤 유형인지는 UI 어디에도 노출하지 않는다)
+  const stylePool = shuffle(BOT_STYLE_POOL).slice(0, players.length - 1)
+  players.slice(1).forEach((p, i) => {
+    p.style = stylePool[i]
+    p.handStyle = stylePool[i]
+    p.intensity = 0.85 + Math.random() * 0.3
+    p.personality = { tight: 0.35 + Math.random() * 0.3, aggression: 0.35 + Math.random() * 0.3 }
+  })
   return {
     players,
     deck: [], community: [],
@@ -83,6 +108,9 @@ export function newGame(): GameState {
     log: [{ text: '홀덤 연습장에 오신 걸 환영해요! 🎉', kind: 'info' }],
     handNumber: 0, actionSeq: 0,
     handOver: null, gameResult: null,
+    preflopRaiserId: null,
+    observed: players.map(emptyStats),
+    voluntary: players.map(() => false),
   }
 }
 
@@ -117,7 +145,12 @@ export function startHand(state: GameState): GameState {
     p.revealed = false
     p.folded = p.out
     p.allIn = false
+    p.plan = null
+    // 오프타입 믹싱: 이번 핸드에 쓸 스타일을 굴린다 (핸드 내에서는 일관되게 유지)
+    p.handStyle = p.isHuman || p.out || Math.random() >= OFF_TYPE_RATE ? p.style : offTypeStyle(p.style)
   }
+  state.preflopRaiserId = null
+  state.voluntary = state.players.map(() => false)
   const inGame = (p: Player) => !p.out
   state.dealerIdx = nextSeat(state, state.dealerIdx, inGame)
   for (let r = 0; r < 2; r++) {
@@ -153,6 +186,20 @@ export function applyAction(state: GameState, action: Action): GameState {
   const p = state.players[state.currentIdx]
   const toCall = Math.max(0, state.currentBet - p.bet)
 
+  // 전원 성향 관찰 — 사람 통계는 봇 적응에, 봇 통계는 코치·플레이어의 유형 추리에 쓰인다
+  if (Array.isArray(state.observed) && state.observed[p.id]) {
+    const s = state.observed[p.id]
+    s.actions++
+    if (action.type === 'raise') s.raises++
+    if (toCall > 0) {
+      s.facedBet++
+      if (action.type === 'fold') s.foldToBet++
+    }
+    if (state.street === 'preflop' && (action.type === 'call' || action.type === 'raise')) {
+      state.voluntary[p.id] = true
+    }
+  }
+
   switch (action.type) {
     case 'fold': {
       p.folded = true
@@ -182,6 +229,7 @@ export function applyAction(state: GameState, action: Action): GameState {
       if (raiseBy > 0) {
         if (raiseBy >= state.minRaise) state.minRaise = raiseBy
         state.currentBet = to
+        if (state.street === 'preflop') state.preflopRaiserId = p.id
         // 레이즈가 나오면 남은 전원이 다시 행동해야 한다
         state.needToAct = state.players
           .filter(q => q.id !== p.id && !q.out && !q.folded && !q.allIn)
@@ -313,6 +361,14 @@ function endHand(state: GameState) {
     if (!p.out && p.chips === 0) {
       p.out = true
       addLog(state, `${p.name}: 칩이 없어 탈락했어요 😵`, 'info')
+    }
+  }
+  if (Array.isArray(state.observed)) {
+    for (const p of state.players) {
+      if (p.cards.length === 2 && state.observed[p.id]) {
+        state.observed[p.id].handsDealt++
+        if (state.voluntary[p.id]) state.observed[p.id].handsVoluntary++
+      }
     }
   }
   const human = state.players.find(p => p.isHuman)!
