@@ -61,6 +61,7 @@ export function CoachPanel({ state }: { state: GameState }) {
         question,
         context,
         history,
+        mode: opts?.kind === 'review' ? 'review' : 'question',
         onDelta: chunk => {
           setMessages(prev => {
             const next = [...prev]

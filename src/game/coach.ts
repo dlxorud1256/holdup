@@ -9,9 +9,10 @@ import { Street } from './types'
 
 export const API_KEY_STORAGE = 'holdup_api_key'
 
-// 코치 품질은 우리가 붙여주는 컨텍스트(승률·팟 오즈·기록)가 좌우하므로
-// 가장 저렴한 Haiku 4.5로 고정 (질문·복기당 약 3~5원)
-const COACH_MODEL = 'claude-haiku-4-5'
+// 하이브리드: 사용자가 직접 읽는 질문 답변은 품질(Sonnet 5), 핸드마다 도는
+// 자동 복기는 비용(Haiku 4.5) 우선. 질문 ~9원, 복기 ~4원.
+const QUESTION_MODEL = 'claude-sonnet-5'
+const REVIEW_MODEL = 'claude-haiku-4-5'
 
 const STREET_KO: Record<Street, string> = { preflop: '프리플랍', flop: '플랍', turn: '턴', river: '리버' }
 
@@ -140,6 +141,7 @@ export async function askCoach(opts: {
   question: string
   context: string
   history: CoachTurn[]
+  mode?: 'question' | 'review'
   onDelta: (chunk: string) => void
 }): Promise<string> {
   const client = new Anthropic({
@@ -152,11 +154,14 @@ export async function askCoach(opts: {
     { role: 'user' as const, content: `[현재 상황]\n${opts.context}\n\n[질문]\n${opts.question}` },
   ]
 
-  // thinking은 사용하지 않는다 — Haiku 4.5는 adaptive 미지원이고,
-  // 짧은 설명엔 불필요한데 thinking 토큰이 출력 요금으로 과금되기 때문
+  const model = opts.mode === 'review' ? REVIEW_MODEL : QUESTION_MODEL
+  // thinking은 끈다 — 짧은 설명엔 불필요한데 thinking 토큰이 출력 요금으로 과금되기 때문.
+  // Sonnet 5는 thinking을 생략하면 기본으로 켜지는 모델이라 명시적으로 disabled를 보내야 하고,
+  // Haiku 4.5는 해당 파라미터 형식을 지원하지 않으므로 생략한다.
   const stream = client.messages.stream({
-    model: COACH_MODEL,
+    model,
     max_tokens: 1024,
+    ...(model === QUESTION_MODEL ? { thinking: { type: 'disabled' as const } } : {}),
     system: SYSTEM_PROMPT,
     messages,
   })
