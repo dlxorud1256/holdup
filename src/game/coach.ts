@@ -9,8 +9,9 @@ import { Street } from './types'
 
 export const API_KEY_STORAGE = 'holdup_api_key'
 
-// 코치는 짧은 설명 위주라 품질·가격 균형이 좋은 Sonnet 5로 고정 (질문당 약 8~12원)
-const COACH_MODEL = 'claude-sonnet-5'
+// 코치 품질은 우리가 붙여주는 컨텍스트(승률·팟 오즈·기록)가 좌우하므로
+// 가장 저렴한 Haiku 4.5로 고정 (질문·복기당 약 3~5원)
+const COACH_MODEL = 'claude-haiku-4-5'
 
 const STREET_KO: Record<Street, string> = { preflop: '프리플랍', flop: '플랍', turn: '턴', river: '리버' }
 
@@ -95,6 +96,40 @@ export function buildGameContext(state: GameState): string {
   return lines.join('\n')
 }
 
+// 핸드 종료 후 자동 복기 요청문
+export const HAND_REVIEW_QUESTION =
+  '방금 끝난 핸드에서 내 플레이를 복기해줘. 잘한 결정 하나와 아쉬운 결정 하나(있다면)를 짚고, ' +
+  '다음에 비슷한 상황이 오면 어떻게 하면 좋을지 알려줘. 4문장 이내로 짧게.'
+
+// 방금 끝난 핸드의 복기용 컨텍스트. 복기할 가치가 없는 핸드(참여 없이 폴드 등)면 null.
+export function buildHandReviewContext(state: GameState): string | null {
+  if (state.phase === 'betting') return null
+  const human = state.players[0]
+  if (human.cards.length !== 2) return null
+  const voluntary = Array.isArray(state.voluntary) ? state.voluntary[0] : true
+  if (human.folded && !voluntary) return null // 돈 안 넣고 접은 핸드는 복기 생략 (비용 절약)
+
+  // 마지막 "───── N번째 핸드 ─────" 구분선부터가 이번 핸드의 기록
+  let start = 0
+  state.log.forEach((l, i) => {
+    if (l.text.startsWith('─────')) start = i
+  })
+  const handLog = state.log.slice(start).map(l => `  · ${l.text}`)
+
+  const lines: string[] = []
+  lines.push(`- 내 카드: ${human.cards.map(cardText).join(' ')}`)
+  if (state.community.length > 0) lines.push(`- 공용 카드: ${state.community.map(cardText).join(' ')}`)
+  lines.push(`- 내 남은 칩: ${fmt(human.chips)}`)
+  if (state.handOver) {
+    const result = state.handOver.winners
+      .map(w => `${w.name} +${fmt(w.amount)}${w.handName ? ` (${w.handName})` : ''}`)
+      .join(', ')
+    lines.push(`- 결과: ${result}`)
+  }
+  lines.push(`- 핸드 전체 기록:\n${handLog.join('\n')}`)
+  return lines.join('\n')
+}
+
 export interface CoachTurn {
   role: 'user' | 'assistant'
   content: string
@@ -117,10 +152,11 @@ export async function askCoach(opts: {
     { role: 'user' as const, content: `[현재 상황]\n${opts.context}\n\n[질문]\n${opts.question}` },
   ]
 
+  // thinking은 사용하지 않는다 — Haiku 4.5는 adaptive 미지원이고,
+  // 짧은 설명엔 불필요한데 thinking 토큰이 출력 요금으로 과금되기 때문
   const stream = client.messages.stream({
     model: COACH_MODEL,
-    max_tokens: 4096,
-    thinking: { type: 'adaptive' },
+    max_tokens: 1024,
     system: SYSTEM_PROMPT,
     messages,
   })

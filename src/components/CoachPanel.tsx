@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { GameState } from '../game/engine'
-import { API_KEY_STORAGE, askCoach, buildGameContext, coachErrorMessage, CoachTurn } from '../game/coach'
+import {
+  API_KEY_STORAGE,
+  askCoach,
+  buildGameContext,
+  buildHandReviewContext,
+  coachErrorMessage,
+  CoachTurn,
+  HAND_REVIEW_QUESTION,
+} from '../game/coach'
 
 interface ChatMsg {
   role: 'user' | 'assistant'
   text: string
+  hidden?: boolean // 자동 복기의 내부 요청문 — API 히스토리엔 포함, 화면엔 미표시
+  kind?: 'review'
 }
 
 const QUICK_QUESTIONS = ['지금 뭘 해야 해?', '왜 그렇게 추천해?', '팟 오즈가 뭐야?']
@@ -36,15 +46,16 @@ export function CoachPanel({ state }: { state: GameState }) {
     setApiKey('')
   }
 
-  const send = async (q: string) => {
-    const question = q.trim()
-    if (!question || busy || !apiKey) return
-    setInput('')
-    const history: CoachTurn[] = messages.slice(-8).map(m => ({ role: m.role, content: m.text }))
-    setMessages(prev => [...prev, { role: 'user', text: question }, { role: 'assistant', text: '' }])
+  const run = async (question: string, context: string, opts?: { hidden?: boolean; kind?: 'review' }) => {
+    // 히스토리는 최근 6개만 — 매 호출 입력 토큰(비용)을 줄인다
+    const history: CoachTurn[] = messages.slice(-6).map(m => ({ role: m.role, content: m.text }))
+    setMessages(prev => [
+      ...prev,
+      { role: 'user', text: question, hidden: opts?.hidden },
+      { role: 'assistant', text: '', kind: opts?.kind },
+    ])
     setBusy(true)
     try {
-      const context = buildGameContext(state)
       await askCoach({
         apiKey,
         question,
@@ -63,13 +74,32 @@ export function CoachPanel({ state }: { state: GameState }) {
       const errText = coachErrorMessage(e)
       setMessages(prev => {
         const next = [...prev]
-        next[next.length - 1] = { role: 'assistant', text: errText }
+        next[next.length - 1] = { ...next[next.length - 1], text: errText }
         return next
       })
     } finally {
       setBusy(false)
     }
   }
+
+  const send = (q: string) => {
+    const question = q.trim()
+    if (!question || busy || !apiKey) return
+    setInput('')
+    void run(question, buildGameContext(state))
+  }
+
+  // 핸드가 끝나면 자동으로 복기 (참여한 핸드만, 핸드당 1회)
+  const lastReviewed = useRef(0)
+  useEffect(() => {
+    if (state.phase === 'betting' || !apiKey || busy) return
+    if (lastReviewed.current === state.handNumber) return
+    lastReviewed.current = state.handNumber // 복기 생략 핸드도 재시도하지 않음
+    const context = buildHandReviewContext(state)
+    if (!context) return
+    void run(HAND_REVIEW_QUESTION, context, { hidden: true, kind: 'review' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase, state.handNumber, apiKey])
 
   if (!apiKey || showKeySetup) {
     return (
@@ -106,14 +136,17 @@ export function CoachPanel({ state }: { state: GameState }) {
     <div className="coach-panel">
       <div className="coach-body" ref={bodyRef}>
         <div className="chat-msg assistant">
-          안녕하세요, 홀덤 코치예요! 🎓 게임 중 언제든 물어보세요. 지금 상황(내 카드, 승률, 추천)을 보고
-          답해드릴게요.
+          안녕하세요, 홀덤 코치예요! 🎓 게임 중 언제든 물어보세요. 핸드가 끝나면 자동으로 짧은 복기도
+          해드릴게요.
         </div>
-        {messages.map((m, i) => (
-          <div key={i} className={`chat-msg ${m.role}`}>
-            {m.text || <span className="chat-typing">생각 중…</span>}
-          </div>
-        ))}
+        {messages.map((m, i) =>
+          m.hidden ? null : (
+            <div key={i} className={`chat-msg ${m.role}${m.kind === 'review' ? ' review' : ''}`}>
+              {m.kind === 'review' && <div className="review-tag">📋 핸드 복기</div>}
+              {m.text || <span className="chat-typing">생각 중…</span>}
+            </div>
+          ),
+        )}
       </div>
       <div className="coach-quick">
         {QUICK_QUESTIONS.map(q => (
