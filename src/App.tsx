@@ -251,7 +251,12 @@ export default function App() {
             <LogPanel log={state.log} />
           </div>
           <div className={`side-body${sideTab === 'history' ? '' : ' hide'}`}>
-            <HistoryPanel history={state.history ?? []} onAskCoach={askCoachFromHistory} />
+            <HistoryPanel
+              history={state.history ?? []}
+              onAskCoach={askCoachFromHistory}
+              stats={Array.isArray(state.observed) ? state.observed[0] : undefined}
+              playerCount={state.players.length}
+            />
           </div>
           <div className={`side-body${sideTab === 'coach' ? '' : ' hide'}`}>
             <CoachPanel state={state} pendingAsk={pendingAsk} onAskConsumed={() => setPendingAsk(null)} />
