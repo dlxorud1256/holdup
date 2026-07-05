@@ -65,7 +65,9 @@ export function buildGameContext(state: GameState): string {
     lines.push(`- 보드 성격: ${parts.length > 0 ? parts.join(', ') : '드라이(비교적 안전)'}`)
   }
   lines.push(`- 팟: ${fmt(pot)} / 내 칩: ${fmt(human.chips)} / 지금 콜 비용: ${fmt(toCall)}`)
-  lines.push(`- 블라인드: ${fmt(state.sb ?? 50)}/${fmt(state.bb ?? 100)} (6핸드마다 인상)`)
+  const isCash = (state.mode ?? 'tournament') === 'cash'
+  lines.push(`- 게임 모드: ${isCash ? '캐시 게임 (블라인드 고정, 파산한 봇은 새 플레이어로 교체)' : '토너먼트 (6핸드마다 블라인드 인상)'}`)
+  lines.push(`- 블라인드: ${fmt(state.sb ?? 50)}/${fmt(state.bb ?? 100)}`)
   const myBB = Math.floor(human.chips / (state.bb ?? 100))
   if (state.phase === 'betting' && !human.out && human.chips > 0 && myBB <= 12) {
     lines.push(`- 내 스택: 약 ${myBB}BB — 숏스택! 어중간한 콜 대신 올인(푸시) 아니면 폴드가 정석이에요`)

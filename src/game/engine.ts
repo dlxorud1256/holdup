@@ -1,4 +1,4 @@
-import { BotStyle, Card, LogEntry, ObservedStats, Phase, Player, Street } from './types'
+import { BotStyle, Card, GameMode, LogEntry, ObservedStats, Phase, Player, Street } from './types'
 import { cardText, newDeck, shuffle } from './deck'
 import { compareHands, evaluateBest, handKoreanName, HandResult } from './handEval'
 
@@ -33,6 +33,7 @@ export interface HandOverInfo {
 }
 
 export interface GameState {
+  mode: GameMode
   players: Player[]
   deck: Card[]
   community: Card[]
@@ -73,6 +74,12 @@ function addLog(state: GameState, text: string, kind: LogEntry['kind'] = 'action
 // 새 게임마다 이 풀에서 3개를 비밀리에 뽑아 봇들에게 배정한다
 export const BOT_STYLE_POOL: BotStyle[] = ['lag', 'station', 'trapper', 'rock', 'balanced']
 
+// 캐시 게임에서 파산한 봇 자리에 앉는 새 손님들
+const GUEST_POOL: [string, string][] = [
+  ['초코', '🐶'], ['밀크', '🐰'], ['탄이', '🐧'], ['보리', '🦝'],
+  ['콩이', '🐹'], ['두부', '🐨'], ['별이', '🦉'], ['망고', '🐵'],
+]
+
 // 오프타입 믹싱: 핸드의 12%는 자기 유형과 다른 스타일로 친다 (읽기를 확신으로 만들지 않기 위해)
 const OFF_TYPE_RATE = 0.12
 
@@ -101,7 +108,7 @@ function mkPlayer(id: number, name: string, avatar: string, isHuman: boolean): P
   }
 }
 
-export function newGame(): GameState {
+export function newGame(mode: GameMode = 'tournament'): GameState {
   const players = [
     mkPlayer(0, '나', '🙂', true),
     mkPlayer(1, '루비', '🦊', false),
@@ -117,6 +124,7 @@ export function newGame(): GameState {
     p.personality = { tight: 0.35 + Math.random() * 0.3, aggression: 0.35 + Math.random() * 0.3 }
   })
   return {
+    mode,
     players,
     deck: [], community: [],
     street: 'preflop', phase: 'handOver',
@@ -187,12 +195,36 @@ export function startHand(state: GameState): GameState {
   state.sbIdx = numIn === 2 ? state.dealerIdx : nextSeat(state, state.dealerIdx, inGame)
   state.bbIdx = nextSeat(state, state.sbIdx, inGame)
 
-  // 블라인드 인상 체크
-  const level = Math.min(BLIND_LEVELS.length - 1, Math.floor((state.handNumber - 1) / HANDS_PER_LEVEL))
+  // 블라인드 인상 체크 (캐시 게임은 항상 첫 레벨 고정)
+  const level = state.mode === 'cash'
+    ? 0
+    : Math.min(BLIND_LEVELS.length - 1, Math.floor((state.handNumber - 1) / HANDS_PER_LEVEL))
   const [newSb, newBb] = BLIND_LEVELS[level]
   const blindsRaised = (state.bb ?? BIG_BLIND) < newBb
   state.sb = newSb
   state.bb = newBb
+
+  // 캐시 게임: 파산한 봇 자리에 새 손님이 앉는다 (새 이름 + 새 비밀 유형 + 통계 리셋)
+  if (state.mode === 'cash') {
+    for (const p of state.players) {
+      if (!p.isHuman && p.out) {
+        const used = new Set(state.players.map(q => q.name))
+        const candidates = GUEST_POOL.filter(([n]) => !used.has(n))
+        const pool = candidates.length > 0 ? candidates : GUEST_POOL
+        const [name, avatar] = pool[Math.floor(Math.random() * pool.length)]
+        p.name = name
+        p.avatar = avatar
+        p.chips = START_CHIPS
+        p.out = false
+        p.style = BOT_STYLE_POOL[Math.floor(Math.random() * BOT_STYLE_POOL.length)]
+        p.handStyle = p.style
+        p.intensity = 0.85 + Math.random() * 0.3
+        p.personality = { tight: 0.35 + Math.random() * 0.3, aggression: 0.35 + Math.random() * 0.3 }
+        if (Array.isArray(state.observed)) state.observed[p.id] = emptyStats()
+        addLog(state, `🚪 새 손님 ${name} ${avatar} 님이 앉았습니다`, 'info')
+      }
+    }
+  }
 
   addLog(state, `───── ${state.handNumber}번째 핸드 ─────`, 'street')
   if (blindsRaised) addLog(state, `📈 블라인드 인상! 이제 ${fmt(newSb)}/${fmt(newBb)}`, 'win')
@@ -424,6 +456,18 @@ function showdown(state: GameState) {
   endHand(state)
 }
 
+// 캐시 게임 리바이: 파산한 사람이 칩을 다시 충전하고 게임을 계속한다
+export function rebuy(state: GameState): GameState {
+  const human = state.players.find(p => p.isHuman)!
+  human.chips = START_CHIPS
+  human.out = false
+  state.gameResult = null
+  state.phase = 'handOver'
+  addLog(state, `💳 리바이! ${fmt(START_CHIPS)} 충전`, 'win')
+  state.actionSeq++
+  return state
+}
+
 function endHand(state: GameState) {
   for (const p of state.players) {
     p.bet = 0
@@ -446,8 +490,9 @@ function endHand(state: GameState) {
   if (human.out) {
     state.phase = 'gameOver'
     state.gameResult = 'lost'
-    addLog(state, '게임 오버… 다시 도전해봐요!', 'info')
-  } else if (botsLeft === 0) {
+    addLog(state, state.mode === 'cash' ? '칩이 다 떨어졌어요 — 리바이할 수 있어요!' : '게임 오버… 다시 도전해봐요!', 'info')
+  } else if (botsLeft === 0 && state.mode !== 'cash') {
+    // 캐시 게임에선 승리 조건 없음 — 다음 핸드에 새 손님이 앉는다
     state.phase = 'gameOver'
     state.gameResult = 'won'
     addLog(state, '모든 상대를 물리쳤어요! 축하합니다 🎉', 'win')

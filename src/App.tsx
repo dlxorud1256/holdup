@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Action, applyAction, fmt, GameState, newGame, potSize, startHand } from './game/engine'
-import { Player } from './game/types'
+import { Action, applyAction, fmt, GameState, newGame, potSize, rebuy, startHand } from './game/engine'
+import { GameMode, Player } from './game/types'
 import { decide } from './game/ai'
 import { estimateEquity } from './game/equity'
 import { describeHoleCards, evaluateBest, handKoreanName } from './game/handEval'
@@ -41,11 +41,18 @@ function actionLabel(a: Action, state: GameState, human: Player): string {
 }
 
 export default function App() {
-  const [state, setState] = useState<GameState>(() => startHand(newGame()))
+  // mode가 null이면 모드 선택 화면 — 게임은 아직 시작 전 (phase 'handOver'로 대기)
+  const [mode, setMode] = useState<GameMode | null>(null)
+  const [state, setState] = useState<GameState>(() => newGame('tournament'))
   const [showGuide, setShowGuide] = useState(false)
   const [showHelp, setShowHelp] = useState(true) // 처음 접속하면 게임 방법부터 보여준다
   const [hint, setHint] = useState<string | null>(null)
   const [sideTab, setSideTab] = useState<'log' | 'coach'>('log')
+
+  const pickMode = (m: GameMode) => {
+    setMode(m)
+    setState(() => startHand(newGame(m)))
+  }
 
   const human = state.players[0]
   const isHumanTurn = state.phase === 'betting' && state.players[state.currentIdx].isHuman
@@ -78,7 +85,11 @@ export default function App() {
   }
 
   const nextHand = () => setState(s => startHand(clone(s)))
-  const restart = () => setState(() => startHand(newGame()))
+  const restart = () => {
+    setMode(null) // 모드 선택 화면으로
+    setState(() => newGame('tournament'))
+  }
+  const doRebuy = () => setState(s => startHand(rebuy(clone(s))))
 
   const onHint = () => {
     const advice = decide(state, human)
@@ -111,7 +122,9 @@ export default function App() {
     <div className="app">
       <header className="header">
         <h1>🃏 홀덤 연습장</h1>
-        <div className="header-info">블라인드 {fmt(state.sb ?? 50)}/{fmt(state.bb ?? 100)}</div>
+        <div className="header-info">
+          {(state.mode ?? 'tournament') === 'cash' ? '💵 캐시' : '🏆 토너먼트'} · 블라인드 {fmt(state.sb ?? 50)}/{fmt(state.bb ?? 100)}
+        </div>
         <div className="header-btns">
           <button className="ghost-btn" onClick={() => setShowGuide(true)}>📖 족보표</button>
           <button className="ghost-btn" onClick={() => setShowHelp(true)}>❓ 게임 방법</button>
@@ -176,10 +189,17 @@ export default function App() {
                   <div className="winner-line">
                     {state.gameResult === 'won'
                       ? '🎉 축하해요! 모든 상대의 칩을 가져왔어요!'
-                      : '😢 칩을 모두 잃었어요. 다시 도전해봐요!'}
+                      : state.mode === 'cash'
+                        ? '💸 칩이 다 떨어졌어요 — 리바이하고 계속할 수 있어요!'
+                        : '😢 칩을 모두 잃었어요. 다시 도전해봐요!'}
                   </div>
                 </div>
-                <button className="btn primary" onClick={restart}>새 게임 시작</button>
+                <div className="over-btns">
+                  {state.mode === 'cash' && state.gameResult === 'lost' && (
+                    <button className="btn primary" onClick={doRebuy}>💳 리바이 (칩 {fmt(10000)})</button>
+                  )}
+                  <button className="btn primary" onClick={restart}>새 게임</button>
+                </div>
               </div>
             )}
           </div>
@@ -206,6 +226,26 @@ export default function App() {
 
       {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+
+      {mode === null && (
+        <div className="modal-backdrop">
+          <div className="modal mode-select">
+            <h2>🃏 게임 방식을 골라주세요</h2>
+            <div className="mode-cards">
+              <button className="mode-card" onClick={() => pickMode('tournament')}>
+                <span className="mode-emoji">🏆</span>
+                <b>토너먼트</b>
+                <p>블라인드가 6핸드마다 올라 갈수록 압박! 상대를 전부 탈락시키면 우승. 숏스택·엔드게임 연습에 좋아요.</p>
+              </button>
+              <button className="mode-card" onClick={() => pickMode('cash')}>
+                <span className="mode-emoji">💵</span>
+                <b>캐시 게임</b>
+                <p>블라인드 고정, 파산한 봇 자리엔 새 손님(새 성향!)이 앉아요. 부담 없이 기본기를 반복 연습.</p>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

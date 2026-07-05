@@ -57,6 +57,9 @@ export interface Player {
 export type Street = 'preflop' | 'flop' | 'turn' | 'river'
 export type Phase = 'betting' | 'handOver' | 'gameOver'
 
+// tournament: 블라인드 인상 + 전원 탈락시키면 우승 / cash: 블라인드 고정 + 탈락 봇은 새 손님으로 교체
+export type GameMode = 'tournament' | 'cash'
+
 export interface LogEntry {
   text: string
   kind: 'action' | 'info' | 'win' | 'street'
