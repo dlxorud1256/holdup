@@ -108,12 +108,16 @@ function mkPlayer(id: number, name: string, avatar: string, isHuman: boolean): P
   }
 }
 
-export function newGame(mode: GameMode = 'tournament'): GameState {
+// 시작 시 앉는 봇 라인업 (선택한 수만큼 앞에서부터)
+const BOT_ROSTER: [string, string][] = [
+  ['루비', '🦊'], ['포포', '🐻'], ['나비', '🐱'], ['초코', '🐶'], ['밀크', '🐰'],
+]
+
+export function newGame(mode: GameMode = 'tournament', botCount = 3): GameState {
+  const n = Math.max(1, Math.min(BOT_ROSTER.length, botCount))
   const players = [
     mkPlayer(0, '나', '🙂', true),
-    mkPlayer(1, '루비', '🦊', false),
-    mkPlayer(2, '포포', '🐻', false),
-    mkPlayer(3, '나비', '🐱', false),
+    ...BOT_ROSTER.slice(0, n).map(([name, avatar], i) => mkPlayer(i + 1, name, avatar, false)),
   ]
   // 아키타입 비밀 셔플 + 게임별 강도 편차 (누가 어떤 유형인지는 UI 어디에도 노출하지 않는다)
   const stylePool = shuffle(BOT_STYLE_POOL).slice(0, players.length - 1)

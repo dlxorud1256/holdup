@@ -299,6 +299,18 @@ input[type=range] { flex: 1; accent-color: var(--gold); min-width: 70px; }
 /* ─── 모드 선택 ─── */
 .mode-select { max-width: 560px; }
 .mode-select h2 { text-align: center; margin-bottom: 16px; }
+.bot-count-row {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-bottom: 16px; font-size: 13px; color: var(--dim);
+}
+.bot-count-btn {
+  width: 34px; height: 34px; border-radius: 10px;
+  background: rgba(255, 255, 255, .05); border: 2px solid var(--line);
+  color: var(--text); font-size: 15px; font-weight: 800; cursor: pointer; font-family: inherit;
+}
+.bot-count-btn:hover { border-color: var(--gold); }
+.bot-count-btn.active { border-color: var(--gold); color: var(--gold); background: rgba(255, 209, 102, .1); }
+.bot-count-row small { font-size: 11px; color: var(--gold); min-width: 90px; }
 .mode-cards { display: flex; gap: 12px; }
 .mode-card {
   flex: 1; background: rgba(255, 255, 255, .05); border: 2px solid var(--line);

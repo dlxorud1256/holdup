@@ -49,9 +49,11 @@ export default function App() {
   const [hint, setHint] = useState<string | null>(null)
   const [sideTab, setSideTab] = useState<'log' | 'coach'>('log')
 
+  const [botCount, setBotCount] = useState(3)
+
   const pickMode = (m: GameMode) => {
     setMode(m)
-    setState(() => startHand(newGame(m)))
+    setState(() => startHand(newGame(m, botCount)))
   }
 
   const human = state.players[0]
@@ -231,6 +233,19 @@ export default function App() {
         <div className="modal-backdrop">
           <div className="modal mode-select">
             <h2>🃏 게임 방식을 골라주세요</h2>
+            <div className="bot-count-row">
+              <span>상대 봇 수</span>
+              {[1, 2, 3, 4, 5].map(n => (
+                <button
+                  key={n}
+                  className={`bot-count-btn${botCount === n ? ' active' : ''}`}
+                  onClick={() => setBotCount(n)}
+                >
+                  {n}
+                </button>
+              ))}
+              <small>{botCount === 1 ? '1:1 헤즈업!' : botCount >= 5 ? '풀 테이블 (템포 느림)' : ''}</small>
+            </div>
             <div className="mode-cards">
               <button className="mode-card" onClick={() => pickMode('tournament')}>
                 <span className="mode-emoji">🏆</span>

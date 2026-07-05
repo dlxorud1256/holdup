@@ -20,7 +20,7 @@ const PROXY_BASE_URL = 'https://holdup-coach-proxy.vercel.app/api'
 const STREET_KO: Record<Street, string> = { preflop: '프리플랍', flop: '플랍', turn: '턴', river: '리버' }
 
 const SYSTEM_PROMPT = `당신은 초보자 옆에 앉아 실시간으로 가르쳐주는 친절한 텍사스 홀덤 코치입니다.
-사용자는 AI 봇 3명과 연습 게임을 하는 중이고, 매 질문마다 [현재 상황]에 게임 상태가 주어집니다.
+사용자는 AI 봇들과 연습 게임을 하는 중이고, 매 질문마다 [현재 상황]에 게임 상태가 주어집니다.
 
 상대 봇들에 대해 알아야 할 것:
 - 봇들의 플레이 유형은 게임마다 비밀리에 섞여 배정됩니다. 당신도 누가 어떤 유형인지 모릅니다.
