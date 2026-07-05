@@ -91,6 +91,11 @@ export function buildGameContext(state: GameState): string {
         ` (봇들은 이 성향에 맞춰 블러핑·밸류 베팅 빈도를 조절합니다)`,
       )
     }
+    if (me && (me.bigPreflopRaises ?? 0) >= 2) {
+      lines.push(
+        `- 내 프리플랍 올인급 레이즈: ${me.bigPreflopRaises}회 — 봇들이 눈치채고 점점 넓은 범위로 콜하기 시작합니다`,
+      )
+    }
   }
 
   const recent = state.log.slice(-12).map(l => l.text)

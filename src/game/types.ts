@@ -26,6 +26,7 @@ export interface ObservedStats {
   foldToBet: number // 그중 폴드한 횟수
   actions: number // 총 액션 수
   raises: number // 그중 레이즈 수
+  bigPreflopRaises: number // 프리플랍 초대형 레이즈(올인급) 횟수 — 남발하면 봇들이 콜 범위를 넓힘
 }
 
 export interface Player {

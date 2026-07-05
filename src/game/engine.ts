@@ -68,7 +68,7 @@ function offTypeStyle(base: BotStyle): BotStyle {
 }
 
 function emptyStats(): ObservedStats {
-  return { handsDealt: 0, handsVoluntary: 0, facedBet: 0, foldToBet: 0, actions: 0, raises: 0 }
+  return { handsDealt: 0, handsVoluntary: 0, facedBet: 0, foldToBet: 0, actions: 0, raises: 0, bigPreflopRaises: 0 }
 }
 
 function mkPlayer(id: number, name: string, avatar: string, isHuman: boolean): Player {
@@ -229,7 +229,13 @@ export function applyAction(state: GameState, action: Action): GameState {
       if (raiseBy > 0) {
         if (raiseBy >= state.minRaise) state.minRaise = raiseBy
         state.currentBet = to
-        if (state.street === 'preflop') state.preflopRaiserId = p.id
+        if (state.street === 'preflop') {
+          state.preflopRaiserId = p.id
+          // 올인급 초대형 레이즈 기록 (봇들의 응징형 적응에 사용)
+          if ((p.allIn || to >= BIG_BLIND * 25) && Array.isArray(state.observed) && state.observed[p.id]) {
+            state.observed[p.id].bigPreflopRaises = (state.observed[p.id].bigPreflopRaises ?? 0) + 1
+          }
+        }
         // 레이즈가 나오면 남은 전원이 다시 행동해야 한다
         state.needToAct = state.players
           .filter(q => q.id !== p.id && !q.out && !q.folded && !q.allIn)
