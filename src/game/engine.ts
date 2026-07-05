@@ -56,6 +56,7 @@ export interface GameState {
   lastAggressorId: number | null // 이번 핸드에서 마지막으로 레이즈/벳한 플레이어
   aggressed: boolean[] // 이번 핸드에 각 플레이어가 공격적 액션(레이즈)을 했는지 (쇼다운 블러프 판정용)
   firstAggressionStreet: number[] // 각 플레이어가 처음 공격한 스트리트 index (-1 = 아직 없음) — 라인 읽기용
+  bigBet: boolean[] // 이번 핸드에 포스트플랍 큰 베팅(팟 55%+)을 했는지 — 사이징 텔 채점용
   observed: ObservedStats[] // 플레이어별 관찰 통계 (index = player id)
   voluntary: boolean[] // 이번 핸드에 각 플레이어가 자발적으로 돈을 넣었는지
 }
@@ -84,6 +85,7 @@ function emptyStats(): ObservedStats {
   return {
     handsDealt: 0, handsVoluntary: 0, facedBet: 0, foldToBet: 0,
     actions: 0, raises: 0, bigPreflopRaises: 0, showdowns: 0, bluffsShown: 0,
+    bigBetsShown: 0, bigBetsValue: 0,
   }
 }
 
@@ -128,6 +130,7 @@ export function newGame(): GameState {
     lastAggressorId: null,
     aggressed: players.map(() => false),
     firstAggressionStreet: players.map(() => -1),
+    bigBet: players.map(() => false),
     observed: players.map(emptyStats),
     voluntary: players.map(() => false),
   }
@@ -172,6 +175,7 @@ export function startHand(state: GameState): GameState {
   state.lastAggressorId = null
   state.aggressed = state.players.map(() => false)
   state.firstAggressionStreet = state.players.map(() => -1)
+  state.bigBet = state.players.map(() => false)
   state.voluntary = state.players.map(() => false)
   const inGame = (p: Player) => !p.out
   state.dealerIdx = nextSeat(state, state.dealerIdx, inGame)
@@ -215,6 +219,7 @@ export function applyAction(state: GameState, action: Action): GameState {
   if (state.phase !== 'betting') return state
   const p = state.players[state.currentIdx]
   const toCall = Math.max(0, state.currentBet - p.bet)
+  const potBefore = potSize(state) // 사이징 텔 채점용: 이 액션 전의 팟
 
   // 전원 성향 관찰 — 사람 통계는 봇 적응에, 봇 통계는 코치·플레이어의 유형 추리에 쓰인다
   if (Array.isArray(state.observed) && state.observed[p.id]) {
@@ -263,6 +268,10 @@ export function applyAction(state: GameState, action: Action): GameState {
         if (Array.isArray(state.aggressed)) state.aggressed[p.id] = true
         if (Array.isArray(state.firstAggressionStreet) && state.firstAggressionStreet[p.id] === -1) {
           state.firstAggressionStreet[p.id] = STREET_ORDER.indexOf(state.street)
+        }
+        // 포스트플랍 큰 베팅(팟 55%+) 기록 — 쇼다운에서 진짜였는지 채점된다
+        if (state.street !== 'preflop' && raiseBy >= potBefore * 0.55 && Array.isArray(state.bigBet)) {
+          state.bigBet[p.id] = true
         }
         if (state.street === 'preflop') {
           state.preflopRaiserId = p.id
@@ -394,6 +403,11 @@ function showdown(state: GameState) {
       const won = winnings.has(q.id)
       if (state.aggressed?.[q.id] && (res.category === 0 || (res.category === 1 && !won))) {
         s.bluffsShown = (s.bluffsShown ?? 0) + 1
+      }
+      // 사이징 텔 채점: 이번 핸드에 큰 베팅을 했다면, 그게 진짜(투페어+ 또는 승리)였는지 기록
+      if (state.bigBet?.[q.id]) {
+        s.bigBetsShown = (s.bigBetsShown ?? 0) + 1
+        if (res.category >= 2 || won) s.bigBetsValue = (s.bigBetsValue ?? 0) + 1
       }
     }
   }

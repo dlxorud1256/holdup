@@ -168,7 +168,16 @@ function buildCtx(state: GameState, p: Player): Ctx {
     const streetIdx = ['preflop', 'flop', 'turn', 'river'].indexOf(state.street)
     const firstAgg = state.firstAggressionStreet?.[aggId] ?? -1
     if (streetIdx >= 2 && firstAgg === streetIdx) bluffCatchBonus += 0.05
-    bluffCatchBonus = Math.min(0.12, bluffCatchBonus)
+
+    // 사이징 텔: 이 사람의 "큰 베팅"이 쇼다운에서 진짜였던 비율을 학습해 반영
+    const s = Array.isArray(state.observed) ? state.observed[aggId] : null
+    const relNow = toCall > 0 ? toCall / Math.max(1, pot - toCall) : 0
+    if (s && relNow >= 0.55 && (s.bigBetsShown ?? 0) >= 3) {
+      const honesty = (s.bigBetsValue ?? 0) / s.bigBetsShown
+      if (honesty >= 0.75) bluffCatchBonus -= 0.05 // 빅벳 = 거의 진짜였음 → 존중 (폴드 쪽으로)
+      else if (honesty <= 0.4) bluffCatchBonus += 0.05 // 빅벳이 자주 뻥이었음 → 불신 (콜 쪽으로)
+    }
+    bluffCatchBonus = Math.max(-0.06, Math.min(0.12, bluffCatchBonus))
   }
 
   // 보드 텍스처 + 스케어 카드 감지

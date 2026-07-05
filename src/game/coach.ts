@@ -124,6 +124,14 @@ export function buildGameContext(state: GameState): string {
         `- 내가 쇼다운에서 들킨 블러프: ${me.bluffsShown}회 — 봇들이 내 베팅을 예전만큼 믿지 않습니다`,
       )
     }
+    if (me && (me.bigBetsShown ?? 0) >= 3) {
+      const honesty = Math.round(((me.bigBetsValue ?? 0) / me.bigBetsShown) * 100)
+      const note =
+        honesty >= 75 ? ' → 봇들이 내 빅벳을 존중해 접기 시작 (가끔 블러프를 섞을 타이밍)'
+        : honesty <= 40 ? ' → 봇들이 내 빅벳을 안 믿고 콜하기 시작 (진짜 패로 크게 칠 타이밍)'
+        : ''
+      lines.push(`- 봇들이 학습한 내 사이징 텔: 큰 베팅이 진짜였던 비율 ${honesty}%${note}`)
+    }
   }
 
   const recent = state.log.slice(-12).map(l => l.text)

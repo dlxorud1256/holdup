@@ -29,6 +29,8 @@ export interface ObservedStats {
   bigPreflopRaises: number // 프리플랍 초대형 레이즈(올인급) 횟수 — 남발하면 봇들이 콜 범위를 넓힘
   showdowns: number // 쇼다운까지 간 횟수
   bluffsShown: number // 쇼다운에서 들킨 블러프(공격적 베팅 + 약한 패) 횟수 — 들키면 베팅 신뢰도 하락
+  bigBetsShown: number // 포스트플랍 큰 베팅(팟의 55%+)이 쇼다운에서 채점된 횟수
+  bigBetsValue: number // 그중 진짜 강한 패였던 횟수 — 비율이 높으면 봇들이 빅벳을 존중(폴드), 낮으면 불신(콜)
 }
 
 export interface Player {
