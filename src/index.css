@@ -370,6 +370,13 @@ input[type=range] { flex: 1; accent-color: var(--gold); min-width: 70px; }
 /* ─── 모드 선택 ─── */
 .mode-select { max-width: 560px; }
 .mode-select h2 { text-align: center; margin-bottom: 16px; }
+.resume-banner {
+  display: block; width: 100%; margin-bottom: 14px;
+  background: rgba(255, 209, 102, .1); border: 2px solid var(--gold); border-radius: 12px;
+  color: var(--gold); font-weight: 800; font-size: 14px; padding: 12px;
+  cursor: pointer; font-family: inherit; transition: transform .15s;
+}
+.resume-banner:hover { transform: translateY(-1px); }
 .bot-count-row {
   display: flex; align-items: center; justify-content: center; gap: 8px;
   margin-bottom: 16px; font-size: 13px; color: var(--dim);

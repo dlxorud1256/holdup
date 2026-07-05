@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Action, applyAction, fmt, GameState, newGame, peek, potSize, rebuy, startHand } from './game/engine'
 import { GameMode, Player } from './game/types'
+import { loadGame, saveGame } from './game/save'
 import { isMuted, setMuted, sfx } from './game/sound'
 import { decide } from './game/ai'
 import { estimateEquity } from './game/equity'
@@ -69,6 +70,19 @@ export default function App() {
     setMode(m)
     setState(() => startHand(newGame(m, botCount)))
   }
+
+  // 저장된 게임 (모드 선택 화면에서만 조회 — "이어서 하기" 제안용)
+  const saved = mode === null ? loadGame() : null
+  const resumeSaved = () => {
+    if (!saved) return
+    setMode(saved.mode ?? 'tournament')
+    setState(() => saved)
+  }
+
+  // 게임이 진행 중이면 상태 변화마다 자동 저장 (새로고침·탭 닫기 대비)
+  useEffect(() => {
+    if (mode !== null) saveGame(state)
+  }, [state, mode])
 
   const human = state.players[0]
   const isHumanTurn = state.phase === 'betting' && state.players[state.currentIdx].isHuman
@@ -316,6 +330,12 @@ export default function App() {
         <div className="modal-backdrop">
           <div className="modal mode-select">
             <h2>🃏 게임 방식을 골라주세요</h2>
+            {saved && (
+              <button className="resume-banner" onClick={resumeSaved}>
+                ▶ 이어서 하기 — {(saved.mode ?? 'tournament') === 'cash' ? '💵 캐시' : '🏆 토너먼트'} ·{' '}
+                {saved.handNumber}핸드 · 내 칩 {fmt(saved.players[0]?.chips ?? 0)}
+              </button>
+            )}
             <div className="bot-count-row">
               <span>상대 봇 수</span>
               {[1, 2, 3, 4, 5].map(n => (
