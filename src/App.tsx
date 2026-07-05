@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Action, applyAction, fmt, GameState, newGame, potSize, rebuy, startHand } from './game/engine'
+import { Action, applyAction, fmt, GameState, newGame, peek, potSize, rebuy, startHand } from './game/engine'
 import { GameMode, Player } from './game/types'
 import { decide } from './game/ai'
 import { estimateEquity } from './game/equity'
@@ -92,6 +92,12 @@ export default function App() {
     setState(() => newGame('tournament'))
   }
   const doRebuy = () => setState(s => startHand(rebuy(clone(s))))
+  const doPeek = () => setState(s => peek(clone(s)))
+
+  // 아직 안 까진 패가 있는 핸드 종료 상태에서만 훔쳐보기 가능
+  const canPeek =
+    (state.phase === 'handOver' || state.phase === 'gameOver') &&
+    state.players.some(p => !p.isHuman && p.cards.length === 2 && !p.revealed)
 
   const onHint = () => {
     const advice = decide(state, human)
@@ -182,7 +188,18 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-                <button className="btn primary" onClick={nextHand}>다음 핸드 ▶</button>
+                <div className="over-btns">
+                  {canPeek && (
+                    <button
+                      className="btn hint-btn"
+                      title="실전엔 없는 연습용 특권! 결과보다 내 판단이 옳았는지에 집중하세요"
+                      onClick={doPeek}
+                    >
+                      🫣 훔쳐보기<span>끝까지 갔다면?</span>
+                    </button>
+                  )}
+                  <button className="btn primary" onClick={nextHand}>다음 핸드 ▶</button>
+                </div>
               </div>
             )}
             {state.phase === 'gameOver' && (
@@ -197,6 +214,9 @@ export default function App() {
                   </div>
                 </div>
                 <div className="over-btns">
+                  {canPeek && (
+                    <button className="btn hint-btn" onClick={doPeek}>🫣 훔쳐보기<span>끝까지 갔다면?</span></button>
+                  )}
                   {state.mode === 'cash' && state.gameResult === 'lost' && (
                     <button className="btn primary" onClick={doRebuy}>💳 리바이 (칩 {fmt(10000)})</button>
                   )}

@@ -460,6 +460,42 @@ function showdown(state: GameState) {
   endHand(state)
 }
 
+// 훔쳐보기(연습용 특권): 핸드 종료 후 숨겨진 패를 공개하고 남은 보드를 마저 깔아
+// "만약 끝까지 갔다면 누가 이겼을까"를 보여준다 (래빗 헌팅).
+// 실전에는 없는 정보이므로 봇들의 관찰 통계에는 일절 반영하지 않는다.
+export function peek(state: GameState): GameState {
+  if (state.phase !== 'handOver' && state.phase !== 'gameOver') return state
+  const wasIncomplete = state.community.length < 5
+  while (state.community.length < 5 && state.deck.length > 0) {
+    state.community.push(state.deck.pop()!)
+  }
+  for (const p of state.players) {
+    if (p.cards.length === 2) p.revealed = true
+  }
+  const dealt = state.players.filter(p => p.cards.length === 2)
+  if (dealt.length > 0 && state.community.length === 5) {
+    let best: Player[] = []
+    let bestRes: HandResult | null = null
+    for (const q of dealt) {
+      const res = evaluateBest([...q.cards, ...state.community])
+      if (!bestRes || compareHands(res, bestRes) > 0) {
+        bestRes = res
+        best = [q]
+      } else if (compareHands(res, bestRes) === 0) {
+        best.push(q)
+      }
+    }
+    const names = best.map(b => b.name).join(', ')
+    addLog(
+      state,
+      `🫣 훔쳐보기${wasIncomplete ? ' (남은 보드까지 공개)' : ''}: 끝까지 갔다면 ${names} — ${handKoreanName(bestRes!)} 승리`,
+      'info',
+    )
+  }
+  state.actionSeq++
+  return state
+}
+
 // 캐시 게임 리바이: 파산한 사람이 칩을 다시 충전하고 게임을 계속한다
 export function rebuy(state: GameState): GameState {
   const human = state.players.find(p => p.isHuman)!
