@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 import { Action, fmt, GameState, potSize } from './engine'
-import { decide } from './ai'
+import { boardTexture, decide } from './ai'
 import { cardText } from './deck'
 import { Street } from './types'
 
@@ -56,6 +56,14 @@ export function buildGameContext(state: GameState): string {
   lines.push(`- 단계: ${state.phase === 'betting' ? STREET_KO[state.street] : '핸드 종료 (결과 확인 중)'}`)
   if (human.cards.length === 2) lines.push(`- 내 카드: ${human.cards.map(cardText).join(' ')}`)
   lines.push(`- 공용 카드: ${state.community.length > 0 ? state.community.map(cardText).join(' ') : '아직 없음'}`)
+  if (state.community.length >= 3) {
+    const t = boardTexture(state.community)
+    const parts: string[] = []
+    if (t.flush3) parts.push('플러시 완성 가능')
+    if (t.straight3) parts.push('연결됨(스트레이트 주의)')
+    if (t.paired) parts.push('페어 보드(풀하우스 가능)')
+    lines.push(`- 보드 성격: ${parts.length > 0 ? parts.join(', ') : '드라이(비교적 안전)'}`)
+  }
   lines.push(`- 팟: ${fmt(pot)} / 내 칩: ${fmt(human.chips)} / 지금 콜 비용: ${fmt(toCall)}`)
   lines.push(`- 블라인드: ${fmt(state.sb ?? 50)}/${fmt(state.bb ?? 100)} (6핸드마다 인상)`)
   const myBB = Math.floor(human.chips / (state.bb ?? 100))

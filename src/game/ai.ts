@@ -1,4 +1,4 @@
-import { Player } from './types'
+import { Card, Player } from './types'
 import { Action, GameState, potSize } from './engine'
 import { evaluateBest, handKoreanName } from './handEval'
 import { estimateEquity } from './equity'
@@ -63,6 +63,37 @@ interface Ctx {
   facingShove: boolean // 스택의 40% 이상을 요구하는 올인급 베팅에 직면
   callEquity: number // 올인 콜 판단용: 큰돈을 넣은 상대만 기준으로 한 승률 (사실상 1:1)
   shoveDiscount: number // 사람이 프리플랍 올인을 남발하면 콜 기준이 내려간다 (응징)
+  wet: number // 보드 위험도 0~1 — 높을수록 밸류 베팅 기준 상향(감속)
+  scare: boolean // 턴/리버에 판을 바꾸는 카드(플러시 완성, 오버카드 등)가 떨어짐 — 블러핑 기회
+  betSmall: boolean // 상대의 쥐꼬리 베팅(팟의 1/3 미만) — 약함으로 해석해 응징 레이즈 대상
+  overBetPenalty: number // 오버베팅(팟 초과)은 양극화 — 어중간한 패의 콜 기준 상향
+}
+
+// 보드 텍스처: 얼마나 "무섭게" 생긴 보드인지 분석 (코치도 사용)
+export function boardTexture(cards: Card[]): {
+  wet: number // 0(드라이) ~ 1(아주 위험)
+  flush3: boolean // 같은 무늬 3장+ → 플러시 완성 가능
+  straight3: boolean // 5칸 범위 안에 3장+ → 스트레이트 위협
+  paired: boolean // 보드 페어 → 풀하우스/트립 가능
+} {
+  if (cards.length < 3) return { wet: 0, flush3: false, straight3: false, paired: false }
+  const suitCount: Record<string, number> = {}
+  for (const cd of cards) suitCount[cd.suit] = (suitCount[cd.suit] ?? 0) + 1
+  const maxSuit = Math.max(...Object.values(suitCount))
+  const ranks = [...new Set(cards.map(cd => cd.rank))].sort((a, b) => a - b)
+  let maxWindow = 0
+  for (const r of ranks) {
+    maxWindow = Math.max(maxWindow, ranks.filter(x => x >= r && x <= r + 4).length)
+  }
+  const flush3 = maxSuit >= 3
+  const straight3 = maxWindow >= 3
+  const paired = ranks.length < cards.length
+  let wet = 0
+  if (maxSuit === 2) wet += 0.15
+  if (flush3) wet += 0.45
+  if (straight3) wet += 0.3
+  if (paired) wet += 0.15
+  return { wet: Math.min(1, wet), flush3, straight3, paired }
 }
 
 // 0 = 가장 이른 위치(가장 먼저 액션, 불리), 1 = 버튼(가장 늦게 액션, 유리)
@@ -140,6 +171,24 @@ function buildCtx(state: GameState, p: Player): Ctx {
     bluffCatchBonus = Math.min(0.12, bluffCatchBonus)
   }
 
+  // 보드 텍스처 + 스케어 카드 감지
+  const tex = boardTexture(state.community)
+  let scare = false
+  if ((state.street === 'turn' || state.street === 'river') && state.community.length >= 4) {
+    const before = boardTexture(state.community.slice(0, -1))
+    const last = state.community[state.community.length - 1]
+    const prevHigh = Math.max(...state.community.slice(0, -1).map(cd => cd.rank))
+    scare =
+      (tex.flush3 && !before.flush3) || // 플러시 완성 카드
+      (tex.straight3 && !before.straight3) || // 스트레이트 위협 카드
+      (last.rank >= 13 && last.rank > prevHigh) // 보드 최고를 넘는 K/A 오버카드
+  }
+
+  // 베팅 크기를 정보로 해석: 팟 대비 비율
+  const rel = toCall > 0 ? toCall / Math.max(1, pot - toCall) : 0
+  const betSmall = toCall > 0 && !facingShove && rel < 0.33
+  const overBetPenalty = toCall > 0 && rel > 1.1 ? 0.04 : 0
+
   return {
     equity, pot, toCall, potOdds, fairShare,
     edge: equity - fairShare,
@@ -151,6 +200,7 @@ function buildCtx(state: GameState, p: Player): Ctx {
     pressure,
     opponents, pos, bluff, callFactor, bluffCatchBonus,
     facingShove, callEquity, shoveDiscount,
+    wet: tex.wet, scare, betSmall, overBetPenalty,
   }
 }
 
@@ -239,8 +289,8 @@ function decideLag(state: GameState, p: Player, c: Ctx): Advice {
     return advise({ type: 'fold' }, '이번엔 접기')
   }
 
-  // 포스트플랍: 상대가 잘 받아줄수록 더 얇은 패로도 밸류 베팅
-  const valueThresh = 0.68 - (c.callFactor - 1) * 0.12
+  // 포스트플랍: 상대가 잘 받아줄수록 얇게 밸류, 위험한 보드에선 감속
+  const valueThresh = 0.68 - (c.callFactor - 1) * 0.12 + c.wet * 0.06
   if (c.toCall <= 0) {
     if (c.canRaise && c.equity >= valueThresh) {
       const size = r < 0.22 ? c.pot * 1.3 : c.pot * (0.6 + Math.random() * 0.4) // 가끔 오버베팅
@@ -250,8 +300,11 @@ function decideLag(state: GameState, p: Player, c: Ctx): Advice {
     if (c.canRaise && cbetSpot && r < Math.min(0.85, 0.75 * c.bluff * p.intensity)) {
       return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.6) }, '컨티뉴에이션 벳')
     }
+    if (c.canRaise && c.scare && r < 0.3 * c.bluff * p.intensity) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.7) }, '스케어 카드 블러프')
+    }
     if (c.canRaise && r < 0.25 * c.bluff * p.intensity) {
-      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.65) }, '블러프 베팅')
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.5) }, '블러프 베팅') // 블러프는 살짝 작게 (읽을 수 있는 패턴)
     }
     return advise({ type: 'check' }, '체크')
   }
@@ -259,13 +312,17 @@ function decideLag(state: GameState, p: Player, c: Ctx): Advice {
     const vsShove = decideVsShove(c, 0.56)
     if (vsShove) return vsShove
   }
+  // 쥐꼬리 베팅은 약함으로 해석 — 응징 레이즈
+  if (c.betSmall && c.canRaise && r < 0.22 * c.bluff * p.intensity) {
+    return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot * 0.8) }, '약한 베팅 응징')
+  }
   if (c.canRaise && c.equity >= 0.8 && r < 0.7) {
     return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot) }, '강하게 레이즈')
   }
   if (c.canRaise && state.street !== 'river' && r < 0.12 * c.bluff * p.intensity && c.toCall < p.chips * 0.3) {
     return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot * 0.9) }, '블러프 레이즈')
   }
-  if (c.equity >= c.potOdds - 0.03 - c.bluffCatchBonus) return advise({ type: 'call' }, '루즈 콜')
+  if (c.equity >= c.potOdds - 0.03 - c.bluffCatchBonus + c.overBetPenalty) return advise({ type: 'call' }, '루즈 콜')
   if (c.canRaise && state.street === 'river' && r < 0.05 * c.bluff) {
     return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot) }, '리버 블러프')
   }
@@ -373,21 +430,27 @@ function decideTrapper(state: GameState, p: Player, c: Ctx): Advice {
     return advise({ type: 'check' }, '(함정 설치) 체크')
   }
 
-  // 평범한 TAG
-  const valueThresh = 0.66 - (c.callFactor - 1) * 0.1
+  // 평범한 TAG — 위험한 보드에선 밸류 기준 상향(감속)
+  const valueThresh = 0.66 - (c.callFactor - 1) * 0.1 + c.wet * 0.06
   if (c.toCall <= 0) {
     if (c.canRaise && c.equity >= valueThresh && r < 0.8) {
       return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.7) }, '밸류 베팅')
+    }
+    if (c.canRaise && c.scare && r < 0.15 * c.bluff) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.65) }, '스케어 카드 찌르기')
     }
     if (c.canRaise && r < 0.08 * c.bluff) {
       return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.6) }, '가끔은 블러프')
     }
     return advise({ type: 'check' }, '체크')
   }
+  if (c.betSmall && c.canRaise && r < 0.12 * c.bluff) {
+    return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot * 0.8) }, '약한 베팅 응징')
+  }
   if (c.canRaise && c.equity >= 0.82 && r < 0.6) {
     return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot * 0.8) }, '밸류 레이즈')
   }
-  if (c.equity >= c.potOdds + 0.08 - c.bluffCatchBonus) return advise({ type: 'call' }, '계산상 콜')
+  if (c.equity >= c.potOdds + 0.08 - c.bluffCatchBonus + c.overBetPenalty) return advise({ type: 'call' }, '계산상 콜')
   if (c.toCall <= c.bb && c.equity >= c.potOdds * 0.85) return advise({ type: 'call' }, '싸니까 콜')
   return advise({ type: 'fold' }, '아니면 접는다')
 }
@@ -422,9 +485,9 @@ function decideRock(state: GameState, p: Player, c: Ctx): Advice {
     return advise({ type: 'fold' }, '패스')
   }
 
-  // 포스트플랍: 정직 그 자체 — 블러핑 없음
+  // 포스트플랍: 정직 그 자체 — 블러핑 없음, 위험한 보드에선 더 신중
   if (c.toCall <= 0) {
-    if (c.canRaise && c.equity > 0.75 && r < 0.75) {
+    if (c.canRaise && c.equity > 0.75 + c.wet * 0.05 && r < 0.75) {
       return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * 0.6) }, '진짜 패 베팅')
     }
     return advise({ type: 'check' }, '체크')
@@ -436,7 +499,7 @@ function decideRock(state: GameState, p: Player, c: Ctx): Advice {
   if (c.canRaise && c.equity > 0.85 && r < 0.6) {
     return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot * 0.8) }, '확실할 때만 레이즈')
   }
-  if (c.equity >= c.potOdds + 0.12 - c.bluffCatchBonus) return advise({ type: 'call' }, '이 정도면 콜')
+  if (c.equity >= c.potOdds + 0.12 - c.bluffCatchBonus + c.overBetPenalty) return advise({ type: 'call' }, '이 정도면 콜')
   return advise({ type: 'fold' }, '아니면 만다')
 }
 
@@ -486,7 +549,7 @@ function decideBalanced(state: GameState, p: Player, c: Ctx): Advice {
     return advise({ type: 'raise', to }, `${c.label} — 아주 유리한 상황이에요. 레이즈로 팟을 키우세요!`)
   }
 
-  let margin = (tight - 0.5) * 0.08 - 0.02 - c.bluffCatchBonus
+  let margin = (tight - 0.5) * 0.08 - 0.02 - c.bluffCatchBonus + c.overBetPenalty
   if (c.toCall > p.chips * 0.5) margin += 0.06 + tight * 0.04 // 스택 절반이 넘는 베팅은 더 신중하게
   if (c.equity >= c.potOdds + margin) {
     return advise(
@@ -499,7 +562,7 @@ function decideBalanced(state: GameState, p: Player, c: Ctx): Advice {
     return advise({ type: 'call' }, `${c.label} — 아슬아슬하지만 콜 비용이 싸서 한번 볼 만해요.`)
   }
 
-  if (c.canRaise && state.street !== 'river' && Math.random() < aggression * 0.05 * (c.opponents > 1 ? 1 / c.opponents : 1)) {
+  if (c.canRaise && state.street !== 'river' && Math.random() < (aggression * 0.05 + (c.scare ? 0.05 : 0)) * (c.opponents > 1 ? 1 / c.opponents : 1)) {
     const to = clampRaiseTo(state, p, state.currentBet + c.pot * 0.8)
     return advise({ type: 'raise', to }, `(블러핑) ${c.label}지만 가끔은 과감하게 밀어붙이는 것도 전략이에요.`)
   }
