@@ -161,7 +161,7 @@ export async function askCoach(opts: {
     model: COACH_MODEL,
     instructions: SYSTEM_PROMPT,
     input,
-    reasoning: { effort: 'none' }, // 추론 토큰 과금 차단 (짧은 설명엔 불필요)
+    reasoning: { effort: 'low' }, // 가벼운 추론 허용 (질문당 ~5원 수준, 유형 추리 등 복합 질문 품질 개선)
     max_output_tokens: 4096,
     stream: true,
   })
