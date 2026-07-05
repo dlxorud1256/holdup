@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Action, applyAction, fmt, GameState, newGame, peek, potSize, rebuy, startHand } from './game/engine'
 import { GameMode, Player } from './game/types'
+import { isMuted, setMuted, sfx } from './game/sound'
 import { decide } from './game/ai'
 import { estimateEquity } from './game/equity'
 import { describeHoleCards, evaluateBest, handKoreanName } from './game/handEval'
@@ -49,6 +50,12 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(true) // 처음 접속하면 게임 방법부터 보여준다
   const [hint, setHint] = useState<string | null>(null)
   const [sideTab, setSideTab] = useState<'log' | 'history' | 'coach'>('log')
+  const [muted, setMutedState] = useState(isMuted())
+
+  const toggleMute = () => {
+    setMuted(!muted)
+    setMutedState(!muted)
+  }
   const [pendingAsk, setPendingAsk] = useState<string | null>(null)
 
   const askCoachFromHistory = (question: string) => {
@@ -85,6 +92,30 @@ export default function App() {
   useEffect(() => {
     setHint(null)
   }, [state.actionSeq])
+
+  // 효과음: 새 로그 라인을 보고 재생 (사람·봇 액션 모두 커버)
+  const prevLogLen = useRef(0)
+  useEffect(() => {
+    const newLines = prevLogLen.current <= state.log.length ? state.log.slice(prevLogLen.current) : []
+    prevLogLen.current = state.log.length
+    let played = 0
+    for (const l of newLines) {
+      if (played >= 3) break // 한 번에 여러 줄이 쌓여도 소리는 최대 3개
+      const t = l.text
+      if (t.includes('획득')) { sfx.win(); played++ }
+      else if (/폴드/.test(t) && !t.startsWith('─')) { sfx.fold(); played++ }
+      else if (t.includes('체크')) { sfx.check(); played++ }
+      else if (/콜 |레이즈|벳 |올인|블라인드 \d/.test(t)) { sfx.chip(); played++ }
+    }
+  }, [state.log.length, state.log])
+
+  // 카드 딜링 소리: 새 핸드 시작·공용 카드 공개 시
+  useEffect(() => {
+    if (state.handNumber > 0) sfx.deal()
+  }, [state.handNumber])
+  useEffect(() => {
+    if (state.community.length > 0) sfx.deal()
+  }, [state.community.length])
 
   const act = (a: Action) => {
     setState(s => {
@@ -133,6 +164,12 @@ export default function App() {
 
   const bots = state.players.slice(1)
 
+  // 핸드 종료 시 승자 연출 (+금액 플로팅, 좌석 글로우)
+  const wonBy = new Map<string, number>()
+  if (state.phase !== 'betting' && state.handOver) {
+    for (const w of state.handOver.winners) wonBy.set(w.name, (wonBy.get(w.name) ?? 0) + w.amount)
+  }
+
   return (
     <div className="app">
       <header className="header">
@@ -143,6 +180,9 @@ export default function App() {
         <div className="header-btns">
           <button className="ghost-btn" onClick={() => setShowGuide(true)}>📖 족보표</button>
           <button className="ghost-btn" onClick={() => setShowHelp(true)}>❓ 게임 방법</button>
+          <button className="ghost-btn mute-btn" onClick={toggleMute} title={muted ? '소리 켜기' : '소리 끄기'}>
+            {muted ? '🔇' : '🔊'}
+          </button>
         </div>
       </header>
 
@@ -150,24 +190,29 @@ export default function App() {
         <div className="table-wrap">
           <div className="table">
             <div className="bots">
-              {bots.map(p => <PlayerSeat key={p.id} p={p} state={state} />)}
+              {bots.map(p => <PlayerSeat key={p.id} p={p} state={state} wonAmount={wonBy.get(p.name)} />)}
             </div>
             <div className="board">
               <div className="street-label">
                 {state.phase === 'betting' ? STREET_KO[state.street] : '결과'}
               </div>
               <div className="community">
-                {state.community.map(c => (
-                  <CardView key={cardKey(c)} card={c} highlight={highlight.has(cardKey(c))} />
+                {state.community.map((c, i) => (
+                  <CardView
+                    key={cardKey(c)}
+                    card={c}
+                    highlight={highlight.has(cardKey(c))}
+                    dealDelay={i < 3 ? i * 110 : 0}
+                  />
                 ))}
                 {Array.from({ length: 5 - state.community.length }).map((_, i) => (
                   <div key={i} className="card slot" />
                 ))}
               </div>
-              <div className="pot">팟 💰 {fmt(potSize(state))}</div>
+              <div className="pot" key={potSize(state)}>팟 💰 {fmt(potSize(state))}</div>
             </div>
             <div className="me-row">
-              <PlayerSeat p={human} state={state} highlight={highlight} />
+              <PlayerSeat p={human} state={state} highlight={highlight} wonAmount={wonBy.get(human.name)} />
               {myHand && (
                 <div className="my-hand-label">
                   현재 족보<br /><b>{myHand}</b>

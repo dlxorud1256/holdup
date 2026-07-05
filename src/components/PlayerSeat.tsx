@@ -7,23 +7,27 @@ interface Props {
   p: Player
   state: GameState
   highlight?: Set<string>
+  wonAmount?: number // 이번 핸드 획득액 — 있으면 승리 연출
 }
 
-export function PlayerSeat({ p, state, highlight }: Props) {
+export function PlayerSeat({ p, state, highlight, wonAmount }: Props) {
   const isTurn = state.phase === 'betting' && state.currentIdx === p.id
   const isDealer = state.dealerIdx === p.id
   const isSB = state.sbIdx === p.id
   const isBB = state.bbIdx === p.id
+  const won = wonAmount != null && wonAmount > 0
   const cls = [
     'seat',
     p.isHuman ? 'human' : '',
     p.folded && !p.out ? 'folded' : '',
     p.out ? 'out' : '',
     isTurn ? 'turn' : '',
+    won ? 'won' : '',
   ].filter(Boolean).join(' ')
 
   return (
     <div className={cls}>
+      {won && <div className="win-float">+{fmt(wonAmount!)}</div>}
       <div className="seat-top">
         <span className="avatar">{p.avatar}</span>
         <div className="seat-info">
@@ -40,13 +44,14 @@ export function PlayerSeat({ p, state, highlight }: Props) {
         {p.out ? (
           <span className="out-label">탈락</span>
         ) : (
-          p.cards.map(c => (
+          p.cards.map((c, i) => (
             <CardView
               key={cardKey(c)}
               card={c}
               hidden={!p.isHuman && !p.revealed}
               highlight={highlight?.has(cardKey(c))}
               small={!p.isHuman}
+              dealDelay={i * 90}
             />
           ))
         )}

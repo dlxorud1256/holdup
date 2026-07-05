@@ -6,13 +6,15 @@ interface Props {
   hidden?: boolean
   highlight?: boolean
   small?: boolean
+  dealDelay?: number // 딜링 스태거(ms) — 마운트 시 애니메이션 지연
 }
 
-export function CardView({ card, hidden, highlight, small }: Props) {
+export function CardView({ card, hidden, highlight, small, dealDelay }: Props) {
   const size = small ? ' small' : ''
-  if (!card || hidden) return <div className={`card back${size}`} />
+  const style = dealDelay ? { animationDelay: `${dealDelay}ms` } : undefined
+  if (!card || hidden) return <div className={`card back${size}`} style={style} />
   return (
-    <div className={`card ${SUIT_RED[card.suit] ? 'red' : 'black'}${highlight ? ' hl' : ''}${size}`}>
+    <div className={`card ${SUIT_RED[card.suit] ? 'red' : 'black'}${highlight ? ' hl' : ''}${size}`} style={style}>
       <span className="card-rank">{rankName(card.rank)}</span>
       <span className="card-suit">{SUIT_SYMBOL[card.suit]}</span>
     </div>
