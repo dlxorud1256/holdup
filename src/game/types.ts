@@ -27,6 +27,8 @@ export interface ObservedStats {
   actions: number // 총 액션 수
   raises: number // 그중 레이즈 수
   bigPreflopRaises: number // 프리플랍 초대형 레이즈(올인급) 횟수 — 남발하면 봇들이 콜 범위를 넓힘
+  showdowns: number // 쇼다운까지 간 횟수
+  bluffsShown: number // 쇼다운에서 들킨 블러프(공격적 베팅 + 약한 패) 횟수 — 들키면 베팅 신뢰도 하락
 }
 
 export interface Player {

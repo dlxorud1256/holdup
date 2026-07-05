@@ -57,6 +57,20 @@ export function buildGameContext(state: GameState): string {
   if (human.cards.length === 2) lines.push(`- 내 카드: ${human.cards.map(cardText).join(' ')}`)
   lines.push(`- 공용 카드: ${state.community.length > 0 ? state.community.map(cardText).join(' ') : '아직 없음'}`)
   lines.push(`- 팟: ${fmt(pot)} / 내 칩: ${fmt(human.chips)} / 지금 콜 비용: ${fmt(toCall)}`)
+  lines.push(`- 블라인드: ${fmt(state.sb ?? 50)}/${fmt(state.bb ?? 100)} (6핸드마다 인상)`)
+  const myBB = Math.floor(human.chips / (state.bb ?? 100))
+  if (state.phase === 'betting' && !human.out && human.chips > 0 && myBB <= 12) {
+    lines.push(`- 내 스택: 약 ${myBB}BB — 숏스택! 어중간한 콜 대신 올인(푸시) 아니면 폴드가 정석이에요`)
+  }
+
+  if (state.phase === 'betting') {
+    const posName =
+      state.dealerIdx === 0 ? '버튼(딜러) — 가장 늦게 액션하는 가장 유리한 자리'
+      : state.sbIdx === 0 ? '스몰 블라인드 — 플랍 이후 첫 액션(불리한 자리)'
+      : state.bbIdx === 0 ? '빅 블라인드'
+      : '이른 위치 — 프리플랍 첫 액션(신중해야 하는 자리)'
+    lines.push(`- 내 포지션: ${posName}`)
+  }
 
   const others = state.players.slice(1).map(p => {
     const status = p.out ? '탈락' : p.folded ? '폴드' : p.allIn ? '올인' : '플레이 중'
@@ -80,7 +94,8 @@ export function buildGameContext(state: GameState): string {
       const vpip = Math.round((s.handsVoluntary / s.handsDealt) * 100)
       const raisePct = s.actions > 0 ? Math.round((s.raises / s.actions) * 100) : 0
       const foldPct = s.facedBet > 0 ? Math.round((s.foldToBet / s.facedBet) * 100) : 0
-      return `${b.name}: ${s.handsDealt}핸드 중 참여 ${vpip}%, 액션 중 레이즈 ${raisePct}%, 베팅 앞 폴드 ${foldPct}%`
+      const bluffNote = (s.bluffsShown ?? 0) > 0 ? `, 쇼다운 블러프 적발 ${s.bluffsShown}회` : ''
+      return `${b.name}: ${s.handsDealt}핸드 중 참여 ${vpip}%, 액션 중 레이즈 ${raisePct}%, 베팅 앞 폴드 ${foldPct}%${bluffNote}`
     })
     lines.push(`- 봇 관찰 통계 (유형 추리 단서):\n${botLines.map(t => `  · ${t}`).join('\n')}`)
 
@@ -94,6 +109,11 @@ export function buildGameContext(state: GameState): string {
     if (me && (me.bigPreflopRaises ?? 0) >= 2) {
       lines.push(
         `- 내 프리플랍 올인급 레이즈: ${me.bigPreflopRaises}회 — 봇들이 눈치채고 점점 넓은 범위로 콜하기 시작합니다`,
+      )
+    }
+    if (me && (me.bluffsShown ?? 0) >= 1) {
+      lines.push(
+        `- 내가 쇼다운에서 들킨 블러프: ${me.bluffsShown}회 — 봇들이 내 베팅을 예전만큼 믿지 않습니다`,
       )
     }
   }

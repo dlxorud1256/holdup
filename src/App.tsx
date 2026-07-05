@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Action, applyAction, BIG_BLIND, fmt, GameState, newGame, potSize, SMALL_BLIND, startHand } from './game/engine'
+import { Action, applyAction, fmt, GameState, newGame, potSize, startHand } from './game/engine'
 import { Player } from './game/types'
 import { decide } from './game/ai'
 import { estimateEquity } from './game/equity'
@@ -15,6 +15,21 @@ import { GuideModal, HelpModal } from './components/Modals'
 const STREET_KO: Record<string, string> = { preflop: '프리플랍', flop: '플랍', turn: '턴', river: '리버' }
 
 const clone = (s: GameState) => structuredClone(s)
+
+// 타이밍 텔: 결정이 어려운 상황일수록 봇이 오래 고민한다 (노이즈 포함).
+// 쉬운 체크는 빠르게, 올인급 결정은 한참 장고 — 실제 사람의 리듬을 흉내낸다.
+function botDelay(s: GameState): number {
+  const p = s.players[s.currentIdx]
+  const toCall = Math.max(0, s.currentBet - p.bet)
+  const pot = potSize(s)
+  let base: number
+  if (toCall <= 0) base = 600 + Math.random() * 700 // 부담 없는 자리 — 가볍게
+  else if (toCall >= p.chips * 0.4) base = 1800 + Math.random() * 2200 // 올인급 — 장고
+  else if (toCall > pot * 0.5) base = 1200 + Math.random() * 1400 // 큰 베팅 — 고민
+  else base = 700 + Math.random() * 900 // 평범한 콜 자리
+  if (Math.random() < 0.06) base += 800 + Math.random() * 1500 // 가끔 이유 없는 고민 (읽기 방해 노이즈)
+  return base
+}
 
 function actionLabel(a: Action, state: GameState, human: Player): string {
   switch (a.type) {
@@ -47,7 +62,7 @@ export default function App() {
         const advice = decide(ns, ns.players[ns.currentIdx])
         return applyAction(ns, advice.action)
       })
-    }, 1000 + Math.random() * 800)
+    }, botDelay(state))
     return () => clearTimeout(t)
   }, [state.actionSeq, state.phase, state.currentIdx, state.players])
 
@@ -96,7 +111,7 @@ export default function App() {
     <div className="app">
       <header className="header">
         <h1>🃏 홀덤 연습장</h1>
-        <div className="header-info">블라인드 {SMALL_BLIND}/{BIG_BLIND}</div>
+        <div className="header-info">블라인드 {fmt(state.sb ?? 50)}/{fmt(state.bb ?? 100)}</div>
         <div className="header-btns">
           <button className="ghost-btn" onClick={() => setShowGuide(true)}>📖 족보표</button>
           <button className="ghost-btn" onClick={() => setShowHelp(true)}>❓ 게임 방법</button>

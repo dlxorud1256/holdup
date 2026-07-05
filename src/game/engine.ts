@@ -6,6 +6,14 @@ export const SMALL_BLIND = 50
 export const BIG_BLIND = 100
 export const START_CHIPS = 10000
 
+// 토너먼트식 블라인드 스케줄: HANDS_PER_LEVEL 핸드마다 한 단계씩 인상
+// → 게임이 갈수록 압박이 생기고 자연스러운 "끝"이 만들어진다
+const BLIND_LEVELS: [number, number][] = [
+  [50, 100], [100, 200], [150, 300], [200, 400],
+  [300, 600], [400, 800], [600, 1200], [800, 1600], [1000, 2000],
+]
+const HANDS_PER_LEVEL = 6
+
 export type Action =
   | { type: 'fold' }
   | { type: 'check' }
@@ -33,6 +41,8 @@ export interface GameState {
   dealerIdx: number
   sbIdx: number
   bbIdx: number
+  sb: number // 현재 스몰 블라인드 (핸드 수에 따라 인상)
+  bb: number // 현재 빅 블라인드
   currentIdx: number
   currentBet: number // 이번 스트리트에서 맞춰야 할 금액
   minRaise: number
@@ -43,6 +53,9 @@ export interface GameState {
   handOver: HandOverInfo | null
   gameResult: 'won' | 'lost' | null
   preflopRaiserId: number | null // 프리플랍 마지막 레이저 (봇의 컨티뉴에이션 벳 판단용)
+  lastAggressorId: number | null // 이번 핸드에서 마지막으로 레이즈/벳한 플레이어
+  aggressed: boolean[] // 이번 핸드에 각 플레이어가 공격적 액션(레이즈)을 했는지 (쇼다운 블러프 판정용)
+  firstAggressionStreet: number[] // 각 플레이어가 처음 공격한 스트리트 index (-1 = 아직 없음) — 라인 읽기용
   observed: ObservedStats[] // 플레이어별 관찰 통계 (index = player id)
   voluntary: boolean[] // 이번 핸드에 각 플레이어가 자발적으로 돈을 넣었는지
 }
@@ -68,7 +81,10 @@ function offTypeStyle(base: BotStyle): BotStyle {
 }
 
 function emptyStats(): ObservedStats {
-  return { handsDealt: 0, handsVoluntary: 0, facedBet: 0, foldToBet: 0, actions: 0, raises: 0, bigPreflopRaises: 0 }
+  return {
+    handsDealt: 0, handsVoluntary: 0, facedBet: 0, foldToBet: 0,
+    actions: 0, raises: 0, bigPreflopRaises: 0, showdowns: 0, bluffsShown: 0,
+  }
 }
 
 function mkPlayer(id: number, name: string, avatar: string, isHuman: boolean): Player {
@@ -103,12 +119,15 @@ export function newGame(): GameState {
     deck: [], community: [],
     street: 'preflop', phase: 'handOver',
     dealerIdx: Math.floor(Math.random() * players.length),
-    sbIdx: 0, bbIdx: 0, currentIdx: 0,
+    sbIdx: 0, bbIdx: 0, sb: SMALL_BLIND, bb: BIG_BLIND, currentIdx: 0,
     currentBet: 0, minRaise: BIG_BLIND, needToAct: [],
     log: [{ text: '홀덤 연습장에 오신 걸 환영해요! 🎉', kind: 'info' }],
     handNumber: 0, actionSeq: 0,
     handOver: null, gameResult: null,
     preflopRaiserId: null,
+    lastAggressorId: null,
+    aggressed: players.map(() => false),
+    firstAggressionStreet: players.map(() => -1),
     observed: players.map(emptyStats),
     voluntary: players.map(() => false),
   }
@@ -150,6 +169,9 @@ export function startHand(state: GameState): GameState {
     p.handStyle = p.isHuman || p.out || Math.random() >= OFF_TYPE_RATE ? p.style : offTypeStyle(p.style)
   }
   state.preflopRaiserId = null
+  state.lastAggressorId = null
+  state.aggressed = state.players.map(() => false)
+  state.firstAggressionStreet = state.players.map(() => -1)
   state.voluntary = state.players.map(() => false)
   const inGame = (p: Player) => !p.out
   state.dealerIdx = nextSeat(state, state.dealerIdx, inGame)
@@ -161,16 +183,24 @@ export function startHand(state: GameState): GameState {
   state.sbIdx = numIn === 2 ? state.dealerIdx : nextSeat(state, state.dealerIdx, inGame)
   state.bbIdx = nextSeat(state, state.sbIdx, inGame)
 
+  // 블라인드 인상 체크
+  const level = Math.min(BLIND_LEVELS.length - 1, Math.floor((state.handNumber - 1) / HANDS_PER_LEVEL))
+  const [newSb, newBb] = BLIND_LEVELS[level]
+  const blindsRaised = (state.bb ?? BIG_BLIND) < newBb
+  state.sb = newSb
+  state.bb = newBb
+
   addLog(state, `───── ${state.handNumber}번째 핸드 ─────`, 'street')
+  if (blindsRaised) addLog(state, `📈 블라인드 인상! 이제 ${fmt(newSb)}/${fmt(newBb)}`, 'win')
   const sb = state.players[state.sbIdx]
   const bb = state.players[state.bbIdx]
-  addLog(state, `${sb.name}: 스몰 블라인드 ${fmt(payChips(sb, SMALL_BLIND))}`, 'info')
-  addLog(state, `${bb.name}: 빅 블라인드 ${fmt(payChips(bb, BIG_BLIND))}`, 'info')
+  addLog(state, `${sb.name}: 스몰 블라인드 ${fmt(payChips(sb, state.sb))}`, 'info')
+  addLog(state, `${bb.name}: 빅 블라인드 ${fmt(payChips(bb, state.bb))}`, 'info')
 
   state.street = 'preflop'
   state.phase = 'betting'
-  state.currentBet = BIG_BLIND
-  state.minRaise = BIG_BLIND
+  state.currentBet = state.bb
+  state.minRaise = state.bb
   state.needToAct = state.players.filter(p => !p.out && !p.allIn).map(p => p.id)
   state.actionSeq++
   if (state.needToAct.length === 0) {
@@ -229,10 +259,15 @@ export function applyAction(state: GameState, action: Action): GameState {
       if (raiseBy > 0) {
         if (raiseBy >= state.minRaise) state.minRaise = raiseBy
         state.currentBet = to
+        state.lastAggressorId = p.id
+        if (Array.isArray(state.aggressed)) state.aggressed[p.id] = true
+        if (Array.isArray(state.firstAggressionStreet) && state.firstAggressionStreet[p.id] === -1) {
+          state.firstAggressionStreet[p.id] = STREET_ORDER.indexOf(state.street)
+        }
         if (state.street === 'preflop') {
           state.preflopRaiserId = p.id
           // 올인급 초대형 레이즈 기록 (봇들의 응징형 적응에 사용)
-          if ((p.allIn || to >= BIG_BLIND * 25) && Array.isArray(state.observed) && state.observed[p.id]) {
+          if ((p.allIn || to >= (state.bb ?? BIG_BLIND) * 25) && Array.isArray(state.observed) && state.observed[p.id]) {
             state.observed[p.id].bigPreflopRaises = (state.observed[p.id].bigPreflopRaises ?? 0) + 1
           }
         }
@@ -288,7 +323,7 @@ function finishBetting(state: GameState) {
     if (!q.folded) q.lastAction = null
   }
   state.currentBet = 0
-  state.minRaise = BIG_BLIND
+  state.minRaise = state.bb ?? BIG_BLIND
   state.street = STREET_ORDER[STREET_ORDER.indexOf(state.street) + 1]
   const count = state.street === 'flop' ? 3 : 1
   for (let i = 0; i < count; i++) state.community.push(state.deck.pop()!)
@@ -346,6 +381,21 @@ function showdown(state: GameState) {
       w.chips += got
       winnings.set(w.id, (winnings.get(w.id) ?? 0) + got)
     })
+  }
+
+  // 쇼다운 기억: 공격적으로 베팅했는데 약한 패가 드러나면 "들킨 블러프"로 기록
+  // → 이후 봇들이 그 플레이어의 베팅을 덜 믿는다
+  if (Array.isArray(state.observed)) {
+    for (const q of alive) {
+      const s = state.observed[q.id]
+      if (!s) continue
+      s.showdowns = (s.showdowns ?? 0) + 1
+      const res = results.get(q.id)!
+      const won = winnings.has(q.id)
+      if (state.aggressed?.[q.id] && (res.category === 0 || (res.category === 1 && !won))) {
+        s.bluffsShown = (s.bluffsShown ?? 0) + 1
+      }
+    }
   }
 
   const winList: WinnerInfo[] = [...winnings.entries()]
