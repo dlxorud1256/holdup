@@ -243,6 +243,31 @@ input[type=range] { flex: 1; accent-color: var(--gold); min-width: 70px; }
 .log-line.street { color: #8fd3ae; font-weight: 700; margin-top: 4px; }
 .log-line.info { color: var(--dim); }
 
+/* ─── 핸드 히스토리 ─── */
+.history-panel {
+  width: 100%; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 16px; padding: 12px;
+  display: flex; flex-direction: column; min-height: 0;
+}
+.history-empty { color: var(--dim); font-size: 13px; text-align: center; padding: 24px 0; line-height: 1.8; }
+.history-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 170px); }
+.history-item { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; flex-shrink: 0; }
+.history-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: rgba(255, 255, 255, .04); border: none; color: var(--text);
+  padding: 8px 10px; cursor: pointer; font-family: inherit; font-size: 12.5px; text-align: left;
+}
+.history-head:hover { background: rgba(255, 255, 255, .08); }
+.history-no { color: var(--dim); font-weight: 700; flex-shrink: 0; }
+.history-net { font-weight: 800; flex-shrink: 0; min-width: 52px; }
+.history-net.pos { color: var(--gold); }
+.history-net.neg { color: #e0796f; }
+.history-sum { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-detail { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: rgba(0, 0, 0, .15); }
+.history-meta { font-size: 12px; color: var(--dim); }
+.history-meta b { color: var(--text); }
+.history-lines { font-size: 11.5px; color: var(--dim); line-height: 1.7; max-height: 180px; overflow-y: auto; }
+
 /* ─── AI 코치 ─── */
 .coach-panel {
   width: 100%; background: var(--panel); border: 1px solid var(--line);

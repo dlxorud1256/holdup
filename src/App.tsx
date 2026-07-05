@@ -9,6 +9,7 @@ import { CardView } from './components/CardView'
 import { PlayerSeat } from './components/PlayerSeat'
 import { ActionBar } from './components/ActionBar'
 import { LogPanel } from './components/LogPanel'
+import { HistoryPanel } from './components/HistoryPanel'
 import { CoachPanel } from './components/CoachPanel'
 import { GuideModal, HelpModal } from './components/Modals'
 
@@ -47,7 +48,13 @@ export default function App() {
   const [showGuide, setShowGuide] = useState(false)
   const [showHelp, setShowHelp] = useState(true) // 처음 접속하면 게임 방법부터 보여준다
   const [hint, setHint] = useState<string | null>(null)
-  const [sideTab, setSideTab] = useState<'log' | 'coach'>('log')
+  const [sideTab, setSideTab] = useState<'log' | 'history' | 'coach'>('log')
+  const [pendingAsk, setPendingAsk] = useState<string | null>(null)
+
+  const askCoachFromHistory = (question: string) => {
+    setPendingAsk(question)
+    setSideTab('coach')
+  }
 
   const [botCount, setBotCount] = useState(3)
 
@@ -232,16 +239,22 @@ export default function App() {
             <button className={sideTab === 'log' ? 'active' : ''} onClick={() => setSideTab('log')}>
               📜 기록
             </button>
+            <button className={sideTab === 'history' ? 'active' : ''} onClick={() => setSideTab('history')}>
+              🕘 히스토리
+            </button>
             <button className={sideTab === 'coach' ? 'active' : ''} onClick={() => setSideTab('coach')}>
               🎓 코치
             </button>
           </div>
-          {/* 탭을 바꿔도 코치 대화가 유지되도록 둘 다 렌더하고 CSS로 숨긴다 */}
+          {/* 탭을 바꿔도 코치 대화가 유지되도록 모두 렌더하고 CSS로 숨긴다 */}
           <div className={`side-body${sideTab === 'log' ? '' : ' hide'}`}>
             <LogPanel log={state.log} />
           </div>
+          <div className={`side-body${sideTab === 'history' ? '' : ' hide'}`}>
+            <HistoryPanel history={state.history ?? []} onAskCoach={askCoachFromHistory} />
+          </div>
           <div className={`side-body${sideTab === 'coach' ? '' : ' hide'}`}>
-            <CoachPanel state={state} />
+            <CoachPanel state={state} pendingAsk={pendingAsk} onAskConsumed={() => setPendingAsk(null)} />
           </div>
         </div>
       </div>

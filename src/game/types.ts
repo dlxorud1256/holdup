@@ -60,6 +60,17 @@ export type Phase = 'betting' | 'handOver' | 'gameOver'
 // tournament: 블라인드 인상 + 전원 탈락시키면 우승 / cash: 블라인드 고정 + 탈락 봇은 새 손님으로 교체
 export type GameMode = 'tournament' | 'cash'
 
+// 핸드 히스토리: 끝난 핸드 하나의 완전한 기록 (히스토리 뷰어용)
+export interface HandRecord {
+  handNumber: number
+  myCards: string // "A♠ K♥"
+  board: string // 핸드 종료 시점 보드 (훔쳐보기하면 갱신됨)
+  lines: string[] // 이 핸드의 전체 로그
+  winners: string // "포포 +1,400 (풀 하우스)"
+  myNet: number // 내 칩 순변화
+  myFolded: boolean
+}
+
 export interface LogEntry {
   text: string
   kind: 'action' | 'info' | 'win' | 'street'

@@ -1,4 +1,4 @@
-import { BotStyle, Card, GameMode, LogEntry, ObservedStats, Phase, Player, Street } from './types'
+import { BotStyle, Card, GameMode, HandRecord, LogEntry, ObservedStats, Phase, Player, Street } from './types'
 import { cardText, newDeck, shuffle } from './deck'
 import { compareHands, evaluateBest, handKoreanName, HandResult } from './handEval'
 
@@ -60,6 +60,8 @@ export interface GameState {
   bigBet: boolean[] // 이번 핸드에 포스트플랍 큰 베팅(팟 55%+)을 했는지 — 사이징 텔 채점용
   observed: ObservedStats[] // 플레이어별 관찰 통계 (index = player id)
   voluntary: boolean[] // 이번 핸드에 각 플레이어가 자발적으로 돈을 넣었는지
+  history: HandRecord[] // 끝난 핸드들의 기록 (최근 50개)
+  handStartChips: number // 이번 핸드 시작 시점의 내 칩 (순손익 계산용)
 }
 
 export const fmt = (n: number) => n.toLocaleString('ko-KR')
@@ -145,6 +147,8 @@ export function newGame(mode: GameMode = 'tournament', botCount = 3): GameState 
     bigBet: players.map(() => false),
     observed: players.map(emptyStats),
     voluntary: players.map(() => false),
+    history: [],
+    handStartChips: START_CHIPS,
   }
 }
 
@@ -183,6 +187,7 @@ export function startHand(state: GameState): GameState {
     // 오프타입 믹싱: 이번 핸드에 쓸 스타일을 굴린다 (핸드 내에서는 일관되게 유지)
     p.handStyle = p.isHuman || p.out || Math.random() >= OFF_TYPE_RATE ? p.style : offTypeStyle(p.style)
   }
+  state.handStartChips = state.players.find(p => p.isHuman)?.chips ?? 0
   state.preflopRaiserId = null
   state.lastAggressorId = null
   state.aggressed = state.players.map(() => false)
@@ -486,11 +491,15 @@ export function peek(state: GameState): GameState {
       }
     }
     const names = best.map(b => b.name).join(', ')
-    addLog(
-      state,
-      `🫣 훔쳐보기${wasIncomplete ? ' (남은 보드까지 공개)' : ''}: 끝까지 갔다면 ${names} — ${handKoreanName(bestRes!)} 승리`,
-      'info',
-    )
+    const peekText =
+      `🫣 훔쳐보기${wasIncomplete ? ' (남은 보드까지 공개)' : ''}: 끝까지 갔다면 ${names} — ${handKoreanName(bestRes!)} 승리`
+    addLog(state, peekText, 'info')
+    // 히스토리 기록에도 훔쳐본 내용을 반영
+    const rec = Array.isArray(state.history) ? state.history[state.history.length - 1] : null
+    if (rec && rec.handNumber === state.handNumber) {
+      rec.board = state.community.map(cardText).join(' ')
+      rec.lines.push(peekText)
+    }
   }
   state.actionSeq++
   return state
@@ -526,6 +535,30 @@ function endHand(state: GameState) {
     }
   }
   const human = state.players.find(p => p.isHuman)!
+
+  // 핸드 히스토리 기록 (히스토리 뷰어용)
+  if (Array.isArray(state.history)) {
+    let start = 0
+    state.log.forEach((l, i) => {
+      if (l.text.startsWith('─────')) start = i
+    })
+    const winnersText = state.handOver
+      ? state.handOver.winners
+          .map(w => `${w.name} +${fmt(w.amount)}${w.handName ? ` (${w.handName})` : ''}`)
+          .join(', ')
+      : ''
+    state.history.push({
+      handNumber: state.handNumber,
+      myCards: human.cards.map(cardText).join(' '),
+      board: state.community.map(cardText).join(' '),
+      lines: state.log.slice(start).map(l => l.text),
+      winners: winnersText,
+      myNet: human.chips - (state.handStartChips ?? human.chips),
+      myFolded: human.folded,
+    })
+    if (state.history.length > 50) state.history.splice(0, state.history.length - 50)
+  }
+
   const botsLeft = state.players.filter(p => !p.isHuman && !p.out).length
   if (human.out) {
     state.phase = 'gameOver'

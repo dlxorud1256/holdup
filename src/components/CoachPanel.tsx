@@ -19,7 +19,13 @@ interface ChatMsg {
 
 const QUICK_QUESTIONS = ['지금 뭘 해야 해?', '왜 그렇게 추천해?', '팟 오즈가 뭐야?']
 
-export function CoachPanel({ state }: { state: GameState }) {
+interface CoachPanelProps {
+  state: GameState
+  pendingAsk?: string | null // 히스토리 탭에서 넘어온 "이 핸드 물어보기" 질문
+  onAskConsumed?: () => void
+}
+
+export function CoachPanel({ state, pendingAsk, onAskConsumed }: CoachPanelProps) {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) ?? '')
   const [keyInput, setKeyInput] = useState('')
   const [showKeySetup, setShowKeySetup] = useState(false)
@@ -87,6 +93,14 @@ export function CoachPanel({ state }: { state: GameState }) {
     setInput('')
     void run(question, buildGameContext(state))
   }
+
+  // 히스토리 탭에서 넘어온 질문 처리
+  useEffect(() => {
+    if (!pendingAsk || !apiKey || busy) return
+    onAskConsumed?.()
+    void run(pendingAsk, buildGameContext(state))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAsk, apiKey, busy])
 
   // 핸드가 끝나면 자동으로 복기 (참여한 핸드만, 핸드당 1회)
   const lastReviewed = useRef(0)
