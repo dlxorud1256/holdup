@@ -22,6 +22,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # 엔진·족보 테스트가 깨지면 배포하지 않는다
+      - run: npm test
       - run: npm run build
       # 빌드 결과를 gh-pages 브랜치로 푸시하면 Pages가 서빙한다
       # (actions/deploy-pages 방식이 불안정해서 브랜치 방식으로 전환)
