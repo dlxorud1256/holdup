@@ -122,11 +122,10 @@ export function newGame(mode: GameMode = 'tournament', botCount = 3): GameState 
     mkPlayer(0, '나', '🙂', true),
     ...BOT_ROSTER.slice(0, n).map(([name, avatar], i) => mkPlayer(i + 1, name, avatar, false)),
   ]
-  // 아키타입 비밀 셔플 + 게임별 강도 편차 (누가 어떤 유형인지는 UI 어디에도 노출하지 않는다)
-  const stylePool = shuffle(BOT_STYLE_POOL).slice(0, players.length - 1)
-  players.slice(1).forEach((p, i) => {
-    p.style = stylePool[i]
-    p.handStyle = stylePool[i]
+  // 아키타입 비밀 배정: 봇마다 독립 추첨이라 같은 유형이 겹칠 수도 있다 (누가 어떤 유형인지는 UI 어디에도 노출하지 않는다)
+  players.slice(1).forEach(p => {
+    p.style = BOT_STYLE_POOL[Math.floor(Math.random() * BOT_STYLE_POOL.length)]
+    p.handStyle = p.style
     p.intensity = 0.85 + Math.random() * 0.3
     p.personality = { tight: 0.35 + Math.random() * 0.3, aggression: 0.35 + Math.random() * 0.3 }
   })
