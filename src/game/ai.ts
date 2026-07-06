@@ -262,6 +262,13 @@ export function decide(state: GameState, p: Player): Advice {
     case 'trapper': return decideTrapper(state, p, ctx)
     case 'rock': return decideRock(state, p, ctx)
     case 'gto': return decideGto(state, p, ctx)
+    case 'shifter': {
+      // 변신형(프로): 현재 기어에 맞는 유형의 판단을 부품처럼 빌려 쓴다
+      const gear = p.gear ?? 'base'
+      if (gear === 'tight') return decideRock(state, p, ctx) // 밸류 모드
+      if (gear === 'aggro') return decideLag(state, p, ctx) // 스틸 모드
+      return decideGto(state, p, ctx) // 기본은 균형
+    }
     default: return decideBalanced(state, p, ctx)
   }
 }

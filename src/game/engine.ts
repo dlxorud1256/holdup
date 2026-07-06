@@ -74,7 +74,7 @@ function addLog(state: GameState, text: string, kind: LogEntry['kind'] = 'action
 }
 
 // 새 게임마다 이 풀에서 봇 수만큼 비밀리에 뽑아 배정한다
-export const BOT_STYLE_POOL: BotStyle[] = ['lag', 'station', 'trapper', 'rock', 'balanced', 'gto']
+export const BOT_STYLE_POOL: BotStyle[] = ['lag', 'station', 'trapper', 'rock', 'balanced', 'gto', 'shifter']
 
 // 캐시 게임에서 파산한 봇 자리에 앉는 새 손님들
 const GUEST_POOL: [string, string][] = [
@@ -107,6 +107,7 @@ function mkPlayer(id: number, name: string, avatar: string, isHuman: boolean): P
     personality: { tight: 0.5, aggression: 0.5 },
     style: 'human', handStyle: 'human', intensity: 1,
     plan: null,
+    gear: 'base', gearHands: 0, gearSeenBluffs: 0, gearSeenValue: 0,
   }
 }
 
@@ -186,6 +187,28 @@ export function startHand(state: GameState): GameState {
     p.plan = null
     // 오프타입 믹싱: 이번 핸드에 쓸 스타일을 굴린다 (핸드 내에서는 일관되게 유지)
     p.handStyle = p.isHuman || p.out || Math.random() >= OFF_TYPE_RATE ? p.style : offTypeStyle(p.style)
+
+    // 변신형(프로)의 기어 변속: 자기 테이블 이미지를 보고 모드를 바꾼다
+    if (!p.isHuman && !p.out && p.style === 'shifter') {
+      const s = Array.isArray(state.observed) ? state.observed[p.id] : null
+      const bluffs = s?.bluffsShown ?? 0
+      const value = s?.bigBetsValue ?? 0
+      p.gearHands = (p.gearHands ?? 0) + 1
+      if (bluffs > (p.gearSeenBluffs ?? 0)) {
+        p.gear = 'tight' // 블러프를 들켰다 → 당분간 다들 콜할 테니 진짜 패로만
+        p.gearHands = 0
+      } else if (value > (p.gearSeenValue ?? 0)) {
+        p.gear = 'aggro' // 강한 패를 보여줬다 → 존중받는 동안 스틸 수확
+        p.gearHands = 0
+      } else if ((p.gearHands ?? 0) >= 4) {
+        // 이벤트가 없으면 주기적으로 기어를 굴려 예측 불가성 유지
+        const roll = Math.random()
+        p.gear = p.gear !== 'base' ? 'base' : roll < 0.4 ? 'aggro' : roll < 0.7 ? 'tight' : 'base'
+        p.gearHands = 0
+      }
+      p.gearSeenBluffs = bluffs
+      p.gearSeenValue = value
+    }
   }
   state.handStartChips = state.players.find(p => p.isHuman)?.chips ?? 0
   state.preflopRaiserId = null
@@ -229,6 +252,10 @@ export function startHand(state: GameState): GameState {
         p.handStyle = p.style
         p.intensity = 0.85 + Math.random() * 0.3
         p.personality = { tight: 0.35 + Math.random() * 0.3, aggression: 0.35 + Math.random() * 0.3 }
+        p.gear = 'base'
+        p.gearHands = 0
+        p.gearSeenBluffs = 0
+        p.gearSeenValue = 0
         if (Array.isArray(state.observed)) state.observed[p.id] = emptyStats()
         addLog(state, `🚪 새 손님 ${name} ${avatar} 님이 앉았습니다`, 'info')
       }

@@ -10,7 +10,11 @@ export interface Card {
 // trapper: 함정형 — 강한 패를 숨겼다가 나중에 터뜨림 / rock: 바위 — 초타이트, 베팅하면 진짜
 // balanced: 균형형 — 교과서적 판단 (사람용 힌트에도 사용)
 // gto: GTO형 — 상대를 관찰하지 않고 수학적 균형만 유지, 사이징 텔 없음 (착취 불가에 가까움)
-export type BotStyle = 'human' | 'lag' | 'station' | 'trapper' | 'rock' | 'balanced' | 'gto'
+// shifter: 변신형(프로) — 자기 테이블 이미지를 보고 기어를 바꿈 (들키면 타이트, 존중받으면 스틸)
+export type BotStyle = 'human' | 'lag' | 'station' | 'trapper' | 'rock' | 'balanced' | 'gto' | 'shifter'
+
+// 변신형의 기어: base(GTO 균형) / tight(밸류 모드 — 바위처럼) / aggro(스틸 모드 — 매니악처럼)
+export type Gear = 'base' | 'tight' | 'aggro'
 
 // 다중 스트리트 계획: setOn 스트리트에서는 약한 척(체크/콜)하고, 다음 스트리트에 크게 침
 export interface TrapPlan {
@@ -53,6 +57,10 @@ export interface Player {
   handStyle: BotStyle // 이번 핸드에 실제로 쓰는 스타일 (10~15%는 오프타입)
   intensity: number // 0.85~1.15 — 같은 유형이라도 게임마다 강도 편차
   plan: TrapPlan | null // 이번 핸드의 다중 스트리트 계획
+  gear?: Gear // 변신형 전용: 현재 기어
+  gearHands?: number // 현재 기어로 친 핸드 수
+  gearSeenBluffs?: number // 기어 판단용: 마지막으로 확인한 자기 블러프 적발 수
+  gearSeenValue?: number // 기어 판단용: 마지막으로 확인한 자기 빅벳 밸류 수
 }
 
 export type Street = 'preflop' | 'flop' | 'turn' | 'river'
