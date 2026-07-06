@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Action, applyAction, fmt, GameState, newGame, peek, potSize, rebuy, startHand } from './game/engine'
-import { GameMode, Player } from './game/types'
+import { Action, applyAction, BOT_ROSTER, BOT_STYLE_POOL, fmt, GameState, newGame, peek, potSize, rebuy, startHand, STYLE_LABELS } from './game/engine'
+import { BotStyle, GameMode, Player } from './game/types'
 import { loadGame, saveGame } from './game/save'
 import { isMuted, setMuted, sfx } from './game/sound'
 import { decide } from './game/ai'
@@ -66,9 +66,13 @@ export default function App() {
 
   const [botCount, setBotCount] = useState(3)
 
+  // 봇 유형 배정: 기본은 무작위 비밀 배정, 원하면 봇별로 직접 지정 (null = 그 봇만 무작위)
+  const [assignStyles, setAssignStyles] = useState(false)
+  const [pickedStyles, setPickedStyles] = useState<(BotStyle | null)[]>([null, null, null, null, null])
+
   const pickMode = (m: GameMode) => {
     setMode(m)
-    setState(() => startHand(newGame(m, botCount)))
+    setState(() => startHand(newGame(m, botCount, assignStyles ? pickedStyles.slice(0, botCount) : undefined)))
   }
 
   // 저장된 게임 (모드 선택 화면에서만 조회 — "이어서 하기" 제안용)
@@ -349,6 +353,42 @@ export default function App() {
               ))}
               <small>{botCount === 1 ? '1:1 헤즈업!' : botCount >= 5 ? '풀 테이블 (템포 느림)' : ''}</small>
             </div>
+            <div className="style-assign-row">
+              <span>봇 유형</span>
+              <button
+                className={`style-mode-btn${!assignStyles ? ' active' : ''}`}
+                onClick={() => setAssignStyles(false)}
+              >
+                🎲 무작위 (비밀)
+              </button>
+              <button
+                className={`style-mode-btn${assignStyles ? ' active' : ''}`}
+                onClick={() => setAssignStyles(true)}
+              >
+                ✍️ 직접 지정
+              </button>
+            </div>
+            {assignStyles && (
+              <div className="style-assign-grid">
+                {BOT_ROSTER.slice(0, botCount).map(([name, avatar], i) => (
+                  <label key={name} className="style-assign-item">
+                    <span>{avatar} {name}</span>
+                    <select
+                      value={pickedStyles[i] ?? 'random'}
+                      onChange={e => {
+                        const v = e.target.value
+                        setPickedStyles(ps => ps.map((s, j) => (j === i ? (v === 'random' ? null : (v as BotStyle)) : s)))
+                      }}
+                    >
+                      <option value="random">🎲 무작위</option>
+                      {BOT_STYLE_POOL.map(s => (
+                        <option key={s} value={s}>{STYLE_LABELS[s as Exclude<BotStyle, 'human'>]}</option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            )}
             <div className="mode-cards">
               <button className="mode-card" onClick={() => pickMode('tournament')}>
                 <span className="mode-emoji">🏆</span>

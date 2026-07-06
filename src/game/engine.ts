@@ -112,19 +112,26 @@ function mkPlayer(id: number, name: string, avatar: string, isHuman: boolean): P
 }
 
 // 시작 시 앉는 봇 라인업 (선택한 수만큼 앞에서부터)
-const BOT_ROSTER: [string, string][] = [
+export const BOT_ROSTER: [string, string][] = [
   ['루비', '🦊'], ['포포', '🐻'], ['나비', '🐱'], ['초코', '🐶'], ['밀크', '🐰'],
 ]
 
-export function newGame(mode: GameMode = 'tournament', botCount = 3): GameState {
+// 시작 화면의 "직접 지정" UI에서 쓰는 유형 한글 이름
+export const STYLE_LABELS: Record<Exclude<BotStyle, 'human'>, string> = {
+  lag: '매니악', station: '콜링 스테이션', trapper: '함정형', rock: '바위',
+  balanced: '균형형', gto: 'GTO형', shifter: '변신형(프로)',
+}
+
+// styles: 봇별 유형 지정 (null이면 그 봇만 무작위). 생략하면 전부 무작위 비밀 배정.
+export function newGame(mode: GameMode = 'tournament', botCount = 3, styles?: (BotStyle | null)[]): GameState {
   const n = Math.max(1, Math.min(BOT_ROSTER.length, botCount))
   const players = [
     mkPlayer(0, '나', '🙂', true),
     ...BOT_ROSTER.slice(0, n).map(([name, avatar], i) => mkPlayer(i + 1, name, avatar, false)),
   ]
-  // 아키타입 비밀 배정: 봇마다 독립 추첨이라 같은 유형이 겹칠 수도 있다 (누가 어떤 유형인지는 UI 어디에도 노출하지 않는다)
-  players.slice(1).forEach(p => {
-    p.style = BOT_STYLE_POOL[Math.floor(Math.random() * BOT_STYLE_POOL.length)]
+  // 아키타입 배정: 기본은 봇마다 독립 추첨(같은 유형이 겹칠 수도 있고, UI 어디에도 노출하지 않는다)
+  players.slice(1).forEach((p, i) => {
+    p.style = styles?.[i] ?? BOT_STYLE_POOL[Math.floor(Math.random() * BOT_STYLE_POOL.length)]
     p.handStyle = p.style
     p.intensity = 0.85 + Math.random() * 0.3
     p.personality = { tight: 0.35 + Math.random() * 0.3, aggression: 0.35 + Math.random() * 0.3 }

@@ -389,6 +389,31 @@ input[type=range] { flex: 1; accent-color: var(--gold); min-width: 70px; }
 .bot-count-btn:hover { border-color: var(--gold); }
 .bot-count-btn.active { border-color: var(--gold); color: var(--gold); background: rgba(255, 209, 102, .1); }
 .bot-count-row small { font-size: 11px; color: var(--gold); min-width: 90px; }
+.style-assign-row {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-bottom: 14px; font-size: 13px; color: var(--dim);
+}
+.style-mode-btn {
+  padding: 7px 12px; border-radius: 10px; font-size: 12.5px; font-weight: 700;
+  background: rgba(255, 255, 255, .05); border: 2px solid var(--line); color: var(--text);
+  cursor: pointer; font-family: inherit; transition: border-color .15s, color .15s;
+}
+.style-mode-btn:hover { border-color: var(--gold); }
+.style-mode-btn.active { border-color: var(--gold); color: var(--gold); background: rgba(255, 209, 102, .1); }
+.style-assign-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px;
+  margin: -4px 0 14px;
+}
+.style-assign-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 10px; border: 1.5px solid var(--line); border-radius: 10px;
+  font-size: 12.5px; color: var(--dim);
+}
+.style-assign-item select {
+  background: transparent; border: none; color: var(--gold); font-family: inherit;
+  font-size: 12.5px; font-weight: 700; cursor: pointer; outline: none;
+}
+.style-assign-item select option { background: #1c2431; color: #e8ecf3; }
 .mode-cards { display: flex; gap: 12px; }
 .mode-card {
   flex: 1; background: rgba(255, 255, 255, .05); border: 2px solid var(--line);
