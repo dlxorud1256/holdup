@@ -73,8 +73,8 @@ function addLog(state: GameState, text: string, kind: LogEntry['kind'] = 'action
   if (state.log.length > 300) state.log.splice(0, state.log.length - 300)
 }
 
-// 새 게임마다 이 풀에서 3개를 비밀리에 뽑아 봇들에게 배정한다
-export const BOT_STYLE_POOL: BotStyle[] = ['lag', 'station', 'trapper', 'rock', 'balanced']
+// 새 게임마다 이 풀에서 봇 수만큼 비밀리에 뽑아 배정한다
+export const BOT_STYLE_POOL: BotStyle[] = ['lag', 'station', 'trapper', 'rock', 'balanced', 'gto']
 
 // 캐시 게임에서 파산한 봇 자리에 앉는 새 손님들
 const GUEST_POOL: [string, string][] = [

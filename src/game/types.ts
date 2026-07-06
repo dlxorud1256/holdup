@@ -9,7 +9,8 @@ export interface Card {
 // lag: 매니악 — 블러핑과 압박 위주 / station: 콜링 스테이션 — 웬만하면 콜, 블러핑 안 통함
 // trapper: 함정형 — 강한 패를 숨겼다가 나중에 터뜨림 / rock: 바위 — 초타이트, 베팅하면 진짜
 // balanced: 균형형 — 교과서적 판단 (사람용 힌트에도 사용)
-export type BotStyle = 'human' | 'lag' | 'station' | 'trapper' | 'rock' | 'balanced'
+// gto: GTO형 — 상대를 관찰하지 않고 수학적 균형만 유지, 사이징 텔 없음 (착취 불가에 가까움)
+export type BotStyle = 'human' | 'lag' | 'station' | 'trapper' | 'rock' | 'balanced' | 'gto'
 
 // 다중 스트리트 계획: setOn 스트리트에서는 약한 척(체크/콜)하고, 다음 스트리트에 크게 침
 export interface TrapPlan {

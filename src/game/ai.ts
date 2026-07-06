@@ -261,8 +261,66 @@ export function decide(state: GameState, p: Player): Advice {
     case 'station': return decideStation(state, p, ctx)
     case 'trapper': return decideTrapper(state, p, ctx)
     case 'rock': return decideRock(state, p, ctx)
+    case 'gto': return decideGto(state, p, ctx)
     default: return decideBalanced(state, p, ctx)
   }
+}
+
+// ───────── GTO형 ⚖️: 균형 기계 — 상대를 관찰하지 않고 수학적 균형만 유지 ─────────
+// 특징: (1) 적응형 리즈(bluffFactor·bluffCatchBonus 등)를 전부 무시
+//       (2) 블러프와 밸류를 같은 크기(팟 66%)·같은 라벨로 베팅 — 사이징 텔 없음
+//       (3) 과폴드하지 않는 수비(MDF), 고정 빈도 블러프 — 착취 불가에 가깝다
+function decideGto(state: GameState, p: Player, c: Ctx): Advice {
+  const advise = (action: Action, reason: string): Advice => ({ action, reason, equity: c.equity })
+  const r = Math.random()
+  // 구조적 요인(상대 수·포지션)만 반영, 상대 성향 리즈는 배제
+  const gtoBluff = (c.opponents > 1 ? 1 / c.opponents : 1) * (0.6 + 0.8 * c.pos)
+
+  // 올인 직면: 순수 수학 (남발 응징·블러프 기억 같은 리즈 없이)
+  if (c.facingShove) {
+    if (c.callEquity >= c.potOdds + 0.03) return advise({ type: 'call' }, '수학적 콜')
+    return advise({ type: 'fold' }, '수학적 폴드')
+  }
+
+  if (c.isPreflop) {
+    if (c.toCall <= 0) {
+      if (c.canRaise && ((c.equity > c.fairShare * 1.35 && r < 0.7) || r < 0.1 * gtoBluff)) {
+        return advise({ type: 'raise', to: clampRaiseTo(state, p, c.bb * 3) }, '균형 레이즈')
+      }
+      return advise({ type: 'check' }, '체크')
+    }
+    const unopened = state.currentBet === c.bb
+    if (c.canRaise && !unopened && ((c.equity > c.fairShare * 1.6 && r < 0.75) || r < 0.07)) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet * 3) }, '균형 3벳')
+    }
+    if (c.canRaise && unopened && c.equity > c.fairShare * (1.25 - 0.35 * c.pos)) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.bb * 3) }, '오픈 레이즈')
+    }
+    if (c.equity >= c.potOdds * 0.95) return advise({ type: 'call' }, '방어 콜')
+    return advise({ type: 'fold' }, '폴드')
+  }
+
+  // 포스트플랍
+  if (c.toCall <= 0) {
+    const SIZE = 0.66 // 블러프든 밸류든 항상 같은 크기 — 읽을 것이 없다
+    if (c.canRaise && c.equity >= 0.62 + c.wet * 0.04 && r < 0.8) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * SIZE) }, '균형 베팅')
+    }
+    if (c.canRaise && c.equity < 0.4 && r < 0.22 * gtoBluff) {
+      return advise({ type: 'raise', to: clampRaiseTo(state, p, c.pot * SIZE) }, '균형 베팅') // 라벨도 동일
+    }
+    return advise({ type: 'check' }, '체크')
+  }
+  if (
+    c.canRaise &&
+    ((c.equity >= 0.8 && r < 0.55) ||
+      (c.equity < 0.35 && state.street !== 'river' && r < 0.06 * gtoBluff))
+  ) {
+    return advise({ type: 'raise', to: clampRaiseTo(state, p, state.currentBet + c.pot * 0.8) }, '균형 레이즈')
+  }
+  // MDF 수비: 팟 오즈보다 살짝 넓게 방어해 과폴드 착취를 차단
+  if (c.equity >= c.potOdds - 0.02) return advise({ type: 'call' }, '방어 콜')
+  return advise({ type: 'fold' }, '폴드')
 }
 
 // ───────── 루비 🦊: 매니악 (loose-aggressive) ─────────
